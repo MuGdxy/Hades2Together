@@ -151,4 +151,56 @@ local unavailableExits = assert(capture:ReadActors().room)
 assert(unavailableExits.id == 3 and unavailableExits.exits == nil)
 assert(environment.import("protocol/room.lua").valid(unavailableExits))
 
+local rewardEncounter = { Name = "HealthRestore" }
+local rewardRoom = {
+  Name = "F_Reprieve01", Encounter = rewardEncounter, SpawnRewardOnId = 40055,
+  OfferedRewards = { [42] = { Type = "Boon", ForceLootName = "ZeusUpgrade" } },
+}
+local offer = { ObjectId = 2000032, Name = "PoseidonUpgrade" }
+game.CurrentRun.CurrentRoom = rewardRoom
+game.SessionState.MapLoads = 4
+game.SessionMapState = { DeferredObstacleInitializationFinished = true }
+game.MapState = { OfferedExitDoors = {}, RewardPointsUsed = {}, RoomRequiredObjects = {} }
+game.LootObjects = { [offer.ObjectId] = offer }
+local exists, useable, nativeName = true, true, offer.Name
+game.IdExists = function(args) assert(args.Id == offer.ObjectId); return exists end
+game.IsUseable = function(args) assert(args.Id == offer.ObjectId); return useable end
+game.GetName = function(args)
+  if args.Id == offer.ObjectId then return nativeName end
+  return names[args.Id]
+end
+capture:OnMap("F_Reprieve01")
+assert(capture:ReadActors().room.rewards == nil) -- door preview alone
+game.MapState.RewardPointsUsed[40055] = offer.ObjectId
+game.MapState.RoomRequiredObjects[offer.ObjectId] = { ObjectId = offer.ObjectId }
+assert(capture:ReadActors().room.rewards == nil) -- unrelated identity
+game.MapState.RoomRequiredObjects[offer.ObjectId] = offer
+offer.SpawnPointId = 40055
+assert(capture:ReadActors().room.rewards == nil) -- shop marker
+offer.SpawnPointId = nil
+nativeName = "DifferentObject"
+assert(capture:ReadActors().room.rewards == nil)
+nativeName = offer.Name
+exists = false
+assert(capture:ReadActors().room.rewards == nil)
+exists = true
+local beforeCompletion = capture:ReadActors().room
+local spawned = assert(beforeCompletion.rewards[1])
+assert(beforeCompletion.encounter == nil and spawned.encounterId == 1 and spawned.id == 1)
+assert(spawned.kind == "PoseidonUpgrade" and spawned.objectId == offer.ObjectId)
+assert(spawned.claims == nil and beforeCompletion.participants == nil)
+assert(environment.import("protocol/room.lua").valid(beforeCompletion))
+rewardEncounter.Completed = true
+local afterCompletion = capture:ReadActors().room
+assert(afterCompletion.encounter.completed and afterCompletion.encounter.id == spawned.encounterId)
+assert(afterCompletion.rewards[1].id == spawned.id)
+useable = false
+game.CurrentLootData = offer
+assert(capture:ReadActors().room.rewards == nil) -- no claim inferred from a pickup
+useable = true
+assert(capture:ReadActors().room.rewards[1].id == spawned.id)
+local replacement = { ObjectId = offer.ObjectId, Name = offer.Name }
+game.MapState.RoomRequiredObjects[offer.ObjectId], game.LootObjects[offer.ObjectId] = replacement, replacement
+assert(capture:ReadActors().room.rewards[1].id == 2) -- reused engine ID, different original object
+
 print("live actor projection passed")

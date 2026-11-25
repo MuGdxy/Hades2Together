@@ -93,6 +93,33 @@ local function readExits(map)
   return exits
 end
 
+local function readAnchoredLoot(game, room, encounter)
+  local map = game.MapState
+  if encounter.Name ~= "HealthRestore" or not stockId(room.SpawnRewardOnId)
+    or type(map) ~= "table" or type(map.RewardPointsUsed) ~= "table"
+    or type(map.RoomRequiredObjects) ~= "table" or type(game.LootObjects) ~= "table" then
+    return nil
+  end
+  local id = map.RewardPointsUsed[room.SpawnRewardOnId]
+  if not stockId(id) then
+    return nil
+  end
+  -- Store kit placement also writes RewardPointsUsed. Require the exact
+  -- stock required-loot object at this room's declared reward point.
+  local loot = game.LootObjects[id]
+  if type(loot) ~= "table" or loot.ObjectId ~= id or loot ~= map.RoomRequiredObjects[id]
+    or loot.SpawnPointId ~= nil or not stockName(loot.Name) then
+    return nil
+  end
+  local args = { Id = id }
+  local found, exists = gameCall("IdExists", args)
+  local useRead, useable = gameCall("IsUseable", args)
+  local nameRead, name = gameCall("GetName", args)
+  if found and exists == true and useRead and useable == true and nameRead and name == loot.Name then
+    return loot
+  end
+end
+
 local function readRoom(self, game, room)
   local load = self.roomLoad
   local mapState = game.SessionMapState
@@ -112,14 +139,31 @@ local function readRoom(self, game, room)
     exits = readExits(game.MapState),
   }
   local encounter = room.Encounter
-  if type(encounter) == "table" and stockName(encounter.Name) and type(encounter.Completed) == "boolean" then
+  if type(encounter) == "table" and stockName(encounter.Name) then
+    local loot = readAnchoredLoot(game, room, encounter)
+    local hasCompletion = type(encounter.Completed) == "boolean"
+    if not hasCompletion and not loot then
+      return view
+    end
     local id = load.encounters[encounter]
     if not id then
       load.encounterSerial = load.encounterSerial + 1
       id = load.encounterSerial
       load.encounters[encounter] = id
     end
-    view.encounter = { id = id, name = encounter.Name, completed = encounter.Completed }
+    if hasCompletion then
+      view.encounter = { id = id, name = encounter.Name, completed = encounter.Completed }
+    end
+    if loot then
+      load.offers = load.offers or {}
+      local offerId = load.offers[loot]
+      if not offerId then
+        load.offerSerial = (load.offerSerial or 0) + 1
+        offerId = load.offerSerial
+        load.offers[loot] = offerId
+      end
+      view.rewards = { { id = offerId, encounterId = id, objectId = loot.ObjectId, kind = loot.Name } }
+    end
   end
   return view
 end

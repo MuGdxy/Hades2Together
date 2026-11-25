@@ -36,9 +36,17 @@ python tests/net_smoke.py --lua lua --stock-room
 
 ## 实机只读投影
 
-`Game:ReadActors()` 在原版 `OnAnyLoad` 通知的名称、房间表、`SessionState.MapLoads` 及 `SessionMapState` 一致，且原版已完成延后物件初始化时附带房间数据。对应原版顺序见 `RoomLogic.lua:126–175, 180–236, 295–359`。装载确认前省略房间作用域。同一地图的不同进图使用不同编号；同一进图中的主遭遇以原版遭遇表保持身份。Lua 热更新沿用同一游戏实例及已登记的加载回调。门来自 `MapState.OfferedExitDoors`，通过原版 `IdExists` 核对对象；读取不到门时省略 `exits`。未确认当前奖励归属和逐席资格，实机投影省略 `rewards` 和 `participants`。
+`Game:ReadActors()` 在原版 `OnAnyLoad` 通知的名称、房间表、`SessionState.MapLoads` 及 `SessionMapState` 一致，且原版已完成延后物件初始化时附带房间数据。对应原版顺序见 `RoomLogic.lua:126–175, 180–236, 295–359`。装载确认前省略房间作用域。同一地图的不同进图使用不同编号；同一进图中的主遭遇以原版遭遇表保持身份。Lua 热更新沿用同一游戏实例及已登记的加载回调。门来自 `MapState.OfferedExitDoors`，通过原版 `IdExists` 核对对象；读取不到门时省略 `exits`。
 
 关闭覆盖层且禁用存档的 `F_Combat01` 实机验证中，四个 localhost 观察端收到同一份房间、`FIntroFight` 和锁定的原版门 `560570`，热更新和重连后房间及遭遇编号不变。该次遭遇仍在进行。真实关卡完成、可用门的使用及原版奖励领取仍需验证。同名地图重访、装载窗口及不同遭遇的编号由 `texlua tests/read_actors.lua` 的夹具覆盖，只读传输用 `texlua tests/observer.lua` 检查。运行实机观察端见 [观察模式](network.md#实机只读观察模式)。
+
+### 已生成的原版奖励
+
+已打包的 `F_Reprieve01` 使用 `HealthRestore`。其房间开始事件先调用原版 `SpawnRoomReward`，实机只读探针在固定生成点 `40055` 观察到原版 `PoseidonUpgrade`（对象 `2000032`）。来源见 `RoomDataF.lua:2960–2974`、`EncounterData_Unique.lua:4–12`、`RoomLogic.lua:1198, 2275–2283` 及 `RewardLogic.lua:424–428`。
+
+当前投影仅包含 `HealthRestore` 的原版指定点上已确认可用的物件。它要求生成点的 `RewardPointsUsed` 记录、`RoomRequiredObjects` 和 `LootObjects` 指向同一个原版对象，并核对原版 `IdExists`、`IsUseable` 和 `GetName`。商店也会写 `RewardPointsUsed`，其配置见 `StoreLogic.lua:647–668`。门前预告、商店标记和未验证类型不会形成奖励记录。奖励的逻辑 ID 绑定于该进图中的原版对象表。原版在奖励已经出现时可能尚未写入 `Completed`，此时允许先送带 `encounterId` 的奖励，确认结算状态后同一 ID 会出现在遭遇记录上。
+
+停止展示奖励可能是物件关掉了使用、准备选择或消失。原版选择界面的 `CurrentLootData` 和 `ScreenAnchors.ChoiceScreen.Source` 只能提供上下文，实际选择的原版提交另有路径。观察模式省略未验证的奖励集合、玩家资格和领取凭据。
 
 ## 后续原版接入
 
