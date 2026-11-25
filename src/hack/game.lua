@@ -54,6 +54,27 @@ function Game:BindHero(playerId)
   end
 end
 
+local function held(readControl, name)
+  return readControl({ Name = name }) and 1 or 0
+end
+
+function Game:ReadLocalInput()
+  local game = rom and rom.game
+  local readControl = game and game.IsControlDown
+  if type(readControl) ~= "function" then
+    return nil, "native control readback is unavailable"
+  end
+  if not self:HeroId() then
+    return nil, "local hero is unavailable"
+  end
+
+  return {
+    moveX = held(readControl, "Right") - held(readControl, "Left"),
+    moveY = held(readControl, "Down") - held(readControl, "Up"),
+    buttons = held(readControl, "Attack1"),
+  }
+end
+
 function Game:PushInput(playerId)
   if playerId ~= 1 then
     return false, "seat " .. playerId .. " has no native player input slot"

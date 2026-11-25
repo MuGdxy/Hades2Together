@@ -50,6 +50,8 @@
 | `SuppressLocalSim` | 客人停下自己的遭遇生成 |
 | `Call` | 调用一个点名的游戏动作，例如 `ScaleEncounter`、`EndRun`、`OfferLoot` |
 
+运行中的游戏绑定另提供 `Game:ReadLocalInput()`。调用方可在游戏更新时采样本机玩家的 `IsControlDown`。方向按右减左、下减上分别取 `-1`、`0`、`1`，`buttons` 的第 0 位为按住 `Attack1`。原生方向查询可以把手柄读数归入方向，但结果仍是布尔值。采样读取当前的按住状态，短于采样间隔的按下并释放可能漏掉。输入状态可交给 `client/input.lua` 的帧构造器，由调用方指定网络席位。连续摇杆轴与瞄准输入目前没有验证，帧构造器补上的瞄准零值仅作占位。没有本地英雄或游戏读回函数时返回 `nil` 和原因。
+
 ## 规则现在会产出的命令
 
 `HeroDown`、`EndRun`、`OfferLoot`、`ScaleEncounter`、`SpawnHero`。
