@@ -2,6 +2,7 @@ return function(test, eq)
   local Codec = import("protocol/codec.lua")
   local Client = import("client/connection.lua")
   local Messages = import("protocol/messages.lua")
+  local Room = import("protocol/room.lua")
   local Tcp = import("net/tcp.lua")
   local Transport = import("net/transport.lua")
 
@@ -130,5 +131,54 @@ return function(test, eq)
     eq(client.snapshot.heroes[1].action.name, "fixture-attack")
     eq(client.snapshot.heroes[1].action.phase, "active")
     eq(client.snapshot.heroes[1].action.instanceId, 7)
+
+    local claim = { playerId = 1, state = "eligible" }
+    local firstRoom = {
+      id = 1, name = "Map", leaving = true, exitsUnlocked = true, exits = {},
+      rewards = { { id = 1, encounterId = 1, kind = "Boon", claims = { claim } } },
+    }
+    local nextRoom = { id = 2, name = "Map", leaving = false, exitsUnlocked = false, exits = {} }
+    assert(tx:send("snap", Messages.snapshot(7, {}, {}, firstRoom))) -- queue an eligible observation
+    claim.state = "consumed"
+    eq(#deliver(Messages.snapshot(8, {}, {}, firstRoom)), 2)
+    claim.state = "eligible"
+    eq(#deliver(Messages.snapshot(7, {}, {}, firstRoom)), 0)
+    eq(client.snapshot.room.rewards[1].claims[1].state, "consumed")
+    eq(#deliver(Messages.snapshot(9, {}, {}, nextRoom), Messages.snapshot(10, {}, {})), 2)
+    eq(client.snapshot.room, nil)
+    eq(#deliver(Messages.snapshot(11, {}, {}, firstRoom)), 0)
+    eq(client.tick, 10)
+    eq(#deliver(Messages.snapshot(11, {}, {}, nextRoom)), 1)
+    eq(client.snapshot.room.id, 2)
+  end)
+
+  test("room projection rejects duplicate identities and invalid claim receipts", function()
+    local claim = { playerId = 1, state = "eligible" }
+    local exit = { id = 42, readyToUse = true, inUse = false }
+    local reward = { id = 1, encounterId = 1, kind = "Boon", claims = { claim } }
+    local room = {
+      id = 2, name = "Map", leaving = false, exitsUnlocked = true,
+      participants = { 1, 2 }, exits = { exit }, rewards = { reward },
+    }
+    eq(Room.valid(room), true)
+    room.exits[2] = exit
+    eq(Room.valid(room), false)
+    room.exits[2] = nil
+    room.participants[2] = 1
+    eq(Room.valid(room), false)
+    room.participants[2] = 2
+    room.rewards[2] = reward
+    eq(Room.valid(room), false)
+    room.rewards[2] = nil
+    reward.claims[2] = claim
+    eq(Room.valid(room), false)
+    reward.claims[2] = nil
+    claim.playerId = 3
+    eq(Room.valid(room), false)
+    claim.playerId = 1
+    claim.choice = "FixtureChoice"
+    eq(Room.valid(room), false)
+    claim.state = "consumed"
+    eq(Room.valid(room), true)
   end)
 end

@@ -4,6 +4,7 @@ local Death = import("gameplay/death.lua")
 local Scaling = import("gameplay/scaling.lua")
 local Loot = import("gameplay/loot.lua")
 local Messages = import("protocol/messages.lua")
+local Room = import("protocol/room.lua")
 
 local Authority = {}
 
@@ -14,6 +15,7 @@ function Authority.start(engine, options)
     engine = engine,
     party = Party.new(),
     tick = 0,
+    stockRules = options.stockRules == true,
     hpPerExtra = options.hpPerExtraPlayer or Scaling.DEFAULT_PER_EXTRA,
     lootPolicy = options.lootPolicy or "round_robin",
     lootContext = { cursor = 1 },
@@ -50,7 +52,8 @@ function Authority.apply(auth, commands)
   end
 end
 
--- The first tick scales enemy health from the party size at that moment.
+-- The legacy fixture loop scales its first encounter. Stock mode only forwards
+-- input and observes the engine's state after that step.
 function Authority.step(auth, inputs)
   if auth.ended then
     local actors = auth.engine:ReadActors()
@@ -63,6 +66,20 @@ function Authority.step(auth, inputs)
   auth.tick = auth.tick + 1
   for _, frame in ipairs(inputs or {}) do
     auth.engine:PushInput(frame.playerId, frame)
+  end
+
+  if auth.stockRules then
+    local actors = auth.engine:ReadActors()
+    local room = actors.room
+    if room ~= nil then
+      assert(Room.valid(room), "invalid authoritative room projection")
+      assert(not auth.roomId or room.id >= auth.roomId, "authoritative room instance regressed")
+      auth.roomId = room.id
+    end
+    return {
+      snapshot = Messages.snapshot(auth.tick, actors.heroes, actors.enemies, room),
+      commands = {},
+    }
   end
 
   local commands = {}

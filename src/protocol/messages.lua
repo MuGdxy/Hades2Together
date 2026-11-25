@@ -69,12 +69,13 @@ function Messages.validInput(msg, maxPlayers)
     and integer(msg.buttons, 0, 4294967295)
 end
 
-function Messages.snapshot(tick, heroes, enemies)
+function Messages.snapshot(tick, heroes, enemies, room)
   return {
     t = "snap",
     tick = tick,
     heroes = heroes,
     enemies = enemies,
+    room = room,
   }
 end
 
