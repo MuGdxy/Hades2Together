@@ -18,21 +18,22 @@ local OFFSETS = {
 }
 
 function Game.location(id)
-  if type(GetLocation) ~= "function" then
+  local fn = Game.gameEnv and Game.gameEnv.GetLocation or GetLocation
+  if type(fn) ~= "function" then
     return 0, 0
   end
-  local point = GetLocation({ Id = id })
-  if type(point) ~= "table" then
+  local ok, point = pcall(fn, { Id = id })
+  if not ok or type(point) ~= "table" then
     return 0, 0
   end
   return point.X or point.x or 0, point.Y or point.y or 0
 end
 
 function Game.teleport(id, x, y)
-  if not id or type(Teleport) ~= "function" then
+  if not id then
     return
   end
-  pcall(Teleport, { Id = id, OffsetX = x, OffsetY = y })
+  gameCall("Teleport", { Id = id, OffsetX = x, OffsetY = y })
 end
 
 local function later(name)
@@ -46,10 +47,24 @@ function Game:SetSession(session)
 end
 
 function Game:HeroId()
-  if type(CurrentRun) ~= "table" or type(CurrentRun.Hero) ~= "table" then
+  local env = self.gameEnv
+  local run = env and env.CurrentRun or CurrentRun
+  if type(run) ~= "table" or type(run.Hero) ~= "table" then
     return nil
   end
-  return CurrentRun.Hero.ObjectId
+  return run.Hero.ObjectId
+end
+
+local function gameCall(name, args)
+  local env = Game.gameEnv
+  local fn = env and env[name] or nil
+  if type(fn) ~= "function" then
+    fn = _G[name]
+  end
+  if type(fn) ~= "function" then
+    return nil
+  end
+  return pcall(fn, args)
 end
 
 function Game:BindHero(playerId, spec)
@@ -63,14 +78,14 @@ end
 
 function Game:PlaceBody(body, heroId)
   local offset = body.offset or { 0, 0 }
-  pcall(Teleport, {
+  gameCall("Teleport", {
     Id = body.id,
     DestinationId = heroId,
     OffsetX = offset[1],
     OffsetY = offset[2],
   })
   if body.labelId then
-    pcall(Teleport, {
+    gameCall("Teleport", {
       Id = body.labelId,
       DestinationId = heroId,
       OffsetX = offset[1],
@@ -80,7 +95,8 @@ function Game:PlaceBody(body, heroId)
 end
 
 function Game:SpawnBody(playerId, spec)
-  if type(SpawnObstacle) ~= "function" then
+  local spawn = Game.gameEnv and Game.gameEnv.SpawnObstacle or SpawnObstacle
+  if type(spawn) ~= "function" then
     return nil
   end
   local heroId = self:HeroId()
@@ -92,7 +108,7 @@ function Game:SpawnBody(playerId, spec)
     return existing.id
   end
 
-  local id = SpawnObstacle({
+  local id = spawn({
     Name = "BlankObstacle3D",
     Group = "Standing",
     DestinationId = heroId,
@@ -107,21 +123,21 @@ function Game:SpawnBody(playerId, spec)
     offset = OFFSETS[playerId] or { 180, 0 },
   }
   self.bodies[playerId] = body
-  pcall(SetThingProperty, { Property = "GrannyModel", Value = "Melinoe_Mesh", DestinationId = id })
-  pcall(SetThingProperty, { Property = "Graphic", Value = "MelinoeIdle", DestinationId = id })
-  pcall(SetThingProperty, { Property = "Material", Value = "Unlit", DestinationId = id })
-  pcall(SetScale, { Id = id, Fraction = 0.7 })
-  pcall(SetAnimation, { Name = "MelinoeIdle", DestinationId = id })
+  gameCall("SetThingProperty", { Property = "GrannyModel", Value = "Melinoe_Mesh", DestinationId = id })
+  gameCall("SetThingProperty", { Property = "Graphic", Value = "MelinoeIdle", DestinationId = id })
+  gameCall("SetThingProperty", { Property = "Material", Value = "Unlit", DestinationId = id })
+  gameCall("SetScale", { Id = id, Fraction = 0.7 })
+  gameCall("SetAnimation", { Name = "MelinoeIdle", DestinationId = id })
   body.anim = "idle"
 
-  local labelId = SpawnObstacle({
+  local labelId = spawn({
     Name = "BlankObstacle",
     Group = "Standing",
     DestinationId = heroId,
   })
   body.labelId = labelId
   if labelId then
-    pcall(CreateTextBox, {
+    gameCall("CreateTextBox", {
       Id = labelId,
       Text = spec.name or ("P" .. tostring(playerId)),
       OffsetY = -180,
@@ -149,24 +165,40 @@ function Game:DropBody(playerId)
   if not body then
     return
   end
-  if type(Destroy) == "function" then
-    pcall(Destroy, { Id = body.id })
+  if type(Destroy) == "function" or (self.gameEnv and type(self.gameEnv.Destroy) == "function") then
+    gameCall("Destroy", { Id = body.id })
     if body.labelId then
-      pcall(Destroy, { Id = body.labelId })
+      gameCall("Destroy", { Id = body.labelId })
     end
   end
   self.bodies[playerId] = nil
 end
 
+if type(rom) == "table" and type(rom.on_import) == "table" and type(rom.on_import.pre) == "function" then
+  rom.on_import.pre(function(a, b)
+    if not Game.loggedHook then
+      Game.loggedHook = true
+      local g = rawget(_G, "LoadMap")
+      print("[Hades2Together] import pre args " .. type(a) .. " " .. type(b)
+        .. " _G.LoadMap=" .. type(_G.LoadMap)
+        .. " raw=" .. type(g))
+    end
+    local env = type(a) == "table" and a or (type(b) == "table" and b or nil)
+    if type(env) == "table" then
+      Game.gameEnv = env
+    elseif type(_G.LoadMap) == "function" then
+      Game.gameEnv = _G
+    end
+  end)
+end
+
 local function resolveLoadMap()
-  if type(import_as_fallback) == "function" and type(rom) == "table" and type(rom.game) == "table" then
-    pcall(import_as_fallback, rom.game)
+  local env = Game.gameEnv
+  if type(env) == "table" and type(env.LoadMap) == "function" then
+    return env.LoadMap
   end
   if type(LoadMap) == "function" then
     return LoadMap
-  end
-  if type(rom) == "table" and type(rom.game) == "table" and type(rom.game.LoadMap) == "function" then
-    return rom.game.LoadMap
   end
 end
 
@@ -175,24 +207,13 @@ function Game:Enter(mapName)
   if not loadMap then
     if not self.loggedLoadMap then
       self.loggedLoadMap = true
-      local gameTable = type(rom) == "table" and type(rom.game) or "nil"
-      local loadType = "nil"
-      if type(rom) == "table" and type(rom.game) == "table" then
-        loadType = type(rom.game.LoadMap)
-      end
-      print("[Hades2Together] LoadMap missing rom.game=" .. gameTable .. " LoadMap=" .. loadType)
+      print("[Hades2Together] LoadMap missing, gameEnv=" .. type(self.gameEnv))
     end
     self.enterResult = "waiting"
     return false
   end
   local ok, err = pcall(function()
-    if type(thread) == "function" then
-      thread(function()
-        loadMap({ Name = mapName })
-      end)
-    else
-      loadMap({ Name = mapName })
-    end
+    loadMap({ Name = mapName })
   end)
   if ok then
     self.enterResult = "requested " .. mapName
@@ -244,17 +265,15 @@ function Game:Drive(playerId, mx, my, dt, heroId)
     Game.teleport(body.labelId, body.x, body.y)
   end
   local anim = moving and "run" or "idle"
-  if body.anim ~= anim and type(SetAnimation) == "function" then
+  if body.anim ~= anim then
     local clip = moving and "MelinoeRun" or "MelinoeIdle"
-    pcall(SetAnimation, { Name = clip, DestinationId = id })
+    gameCall("SetAnimation", { Name = clip, DestinationId = id })
     body.anim = anim
   end
-  if moving and type(SetAngle) == "function" then
+  if moving then
     local angle = math.atan2(my, mx) * 180 / math.pi
-    pcall(SetAngle, { Id = id, Angle = angle })
-    if type(SetGoalAngle) == "function" then
-      pcall(SetGoalAngle, { Id = id, Angle = angle, CompleteAngle = true })
-    end
+    gameCall("SetAngle", { Id = id, Angle = angle })
+    gameCall("SetGoalAngle", { Id = id, Angle = angle, CompleteAngle = true })
   end
 end
 
@@ -333,11 +352,15 @@ function Game:OnMap(name)
 end
 
 function Game:Install()
-  if self.installed or type(OnAnyLoad) ~= "function" then
+  if self.installed then
+    return
+  end
+  local onAnyLoad = self.gameEnv and self.gameEnv.OnAnyLoad or OnAnyLoad
+  if type(onAnyLoad) ~= "function" then
     return
   end
   self.installed = true
-  OnAnyLoad({ function(args)
+  onAnyLoad({ function(args)
     Game:OnMap(args and args.name)
   end })
 end
