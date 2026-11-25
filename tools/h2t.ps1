@@ -7,6 +7,8 @@
 #   .\tools\h2t.ps1 player add "Second Melinoe"
 #   .\tools\h2t.ps1 player remove 2
 #   .\tools\h2t.ps1 enter
+#   .\tools\h2t.ps1 input 1 0 0 Attack1
+#   .\tools\h2t.ps1 help
 #   .\tools\h2t.ps1 status
 
 [CmdletBinding(PositionalBinding = $false)]
@@ -22,6 +24,9 @@ $statusPath = Join-Path $control "status.txt"
 New-Item -ItemType Directory -Force -Path $control | Out-Null
 
 function Add-ControlCommand([string]$Line) {
+    if ($Line -match '[\r\n]') {
+        throw 'Expected one command per line.'
+    }
     $stream = [IO.File]::Open($commandsPath, [IO.FileMode]::Append, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
     $bytes = [Text.Encoding]::UTF8.GetBytes($Line + "`n")
     $stream.Write($bytes, 0, $bytes.Length)
@@ -45,8 +50,30 @@ function Get-ControlStatus {
 }
 
 if ($Command -and $Command.Count -gt 0) {
+    foreach ($word in $Command) {
+        if ($word -match '[\r\n]') {
+            Write-Error "Expected single-line arguments."
+            exit 2
+        }
+    }
     $head = $Command[0]
     $action = if ($Command.Count -ge 2) { $Command[1] } else { "" }
+    if ($head -eq "help" -and $Command.Count -eq 1) {
+        Add-ControlCommand "help"
+        Write-Output "input <seat> <moveX> <moveY> [action ...]"
+        Write-Output "queued help. Run h2t.ps1 status after the game polls to see the V1 action names."
+        exit 0
+    }
+    if ($head -eq "input") {
+        if ($Command.Count -lt 4 -or ($Command[1..($Command.Count - 1)] -match '^$|\s')) {
+            Write-Error "usage: h2t.ps1 input <seat> <moveX> <moveY> [action ...]"
+            exit 2
+        }
+        $line = "input " + ($Command[1..($Command.Count - 1)] -join " ")
+        Add-ControlCommand $line
+        Write-Output "queued $line"
+        exit 0
+    }
     if ($head -eq "play") {
         $sample = Join-Path (Split-Path $PSScriptRoot -Parent) "control\inputs.txt"
         $dest = Join-Path $control "inputs.txt"
@@ -91,7 +118,7 @@ if ($Command -and $Command.Count -gt 0) {
         Write-Output "queued $line"
         exit 0
     }
-    Write-Error "usage: h2t.ps1 [enter [map] | play | status | players | player add [name] | player remove <slot|name>]"
+    Write-Error "usage: h2t.ps1 [help | input <seat> <moveX> <moveY> [action ...] | enter [map] | play | status | players | player add [name] | player remove <slot|name>]"
     exit 2
 }
 

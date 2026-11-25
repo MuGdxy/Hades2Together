@@ -1,3 +1,5 @@
+local Actions = import("protocol/actions.lua")
+local Messages = import("protocol/messages.lua")
 local Session = import("protocol/session.lua")
 
 local Console = {}
@@ -66,11 +68,37 @@ function Console.roster(console)
   return roster(console.session)
 end
 
-function Console.execute(console, line)
+local function submitSample(words, submitInput)
+  local seatText = words[2]
+  local seat = seatText and seatText:match("^%d+$") and tonumber(seatText)
+  if not seat or seat < 1 or seat > Session.MAX_PLAYERS then
+    return "ERR input seat must be 1-" .. Session.MAX_PLAYERS
+  end
+  local moveX, moveY = tonumber(words[3]), tonumber(words[4])
+  if not Messages.validAxis(moveX) or not Messages.validAxis(moveY) then
+    return "ERR input axes must be numbers in [-1,1]"
+  end
+  local buttons, unknown = Actions.mask(words, 5)
+  if not buttons then
+    return "ERR unknown input action " .. unknown
+  end
+  if not submitInput then
+    return "ERR input submission unavailable"
+  end
+  local ok, reason = submitInput(seat, { moveX = moveX, moveY = moveY, buttons = buttons })
+  if not ok then
+    return "ERR input " .. reason
+  end
+  return "OK input " .. seat
+end
+
+function Console.execute(console, line, submitInput)
   if type(line) ~= "string" then
     return "ERR empty"
   end
-  line = line:gsub("\r", "")
+  if line:find("[\r\n]") then
+    return "ERR expected one command per line"
+  end
   line = line:gsub("^%s+", ""):gsub("%s+$", "")
   if line == "" then
     return "ERR empty"
@@ -82,6 +110,11 @@ function Console.execute(console, line)
 
   if head == "help" then
     return "OK commands: help | status | players | player add [name] | player remove <slot|name> | enter [map] | play"
+      .. " | input <seat> <moveX> <moveY> [action ...]; V" .. Actions.VERSION .. " actions: " .. Actions.names()
+  end
+
+  if head == "input" then
+    return submitSample(words, submitInput)
   end
 
   if head == "play" then

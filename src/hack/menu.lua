@@ -42,7 +42,11 @@ end
 
 function Menu.pump(control, game)
   local console = control.console
-  local results = Bridge.sync(console, control.commandsPath)
+  local tick = (control.inputTick or 0) + 1
+  control.inputTick = tick
+  local results = Bridge.sync(console, control.commandsPath, function(playerId, state)
+    return game:SubmitInput(tick, playerId, state)
+  end)
   if #results > 0 then
     control.results = results
   end
@@ -74,7 +78,7 @@ function Menu.pump(control, game)
   end
   control.lastClock = now
   game:Install()
-  game:Step(dt)
+  game:Step(dt, tick)
   Menu.publish(control, game, "polling")
 end
 

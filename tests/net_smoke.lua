@@ -76,7 +76,8 @@ local function serve()
   local last = {}
   for _, entry in ipairs(received) do
     local seat, frame = entry.seat, entry.frame
-    local state = assert(expected[seat], "unexpected sender")
+    local state = seat == 1 and frame.seq == 2 and { 0, 0, 0 }
+      or assert(expected[seat], "unexpected sender")
     equal(frame.playerId, seat, "input playerId")
     equal(frame.seq, (last[seat] or 0) + 1, "input order")
     last[seat] = frame.seq
@@ -187,15 +188,23 @@ local function play()
   end
   assert(client:sendInput(state))
   if seat == 1 then
+    local invalid, reason = client:sendInput({ buttons = 256 })
+    equal(invalid, nil, "client rejected unknown button bit")
+    equal(reason, "invalid input", "client rejection reason")
+    equal(client.seq, 1, "client rejection preserved sequence")
     local function submit(playerId, seq, payload)
       assert(client.transport:send("in", Input.frame(900000, playerId, payload, seq)))
     end
     local forgedState = { moveX = 1, buttons = 99 }
     submit(1, 1, forgedState)  -- duplicate
-    submit(1, 2, state)        -- valid actions with a forged tick
+    submit(1, 2, {})           -- release all actions with a forged tick
     submit(1, 1, forgedState)  -- replay older than the last accepted frame
     submit(2, 3, forgedState)  -- connection does not own seat 2
     submit(1, 3, { moveX = 2 })
+    submit(1, 3, { buttons = 257 })
+    local extra = Input.frame(900000, 1, {}, 3)
+    extra.action = "SpawnObstacle"
+    assert(client.transport:send("in", extra))
     local errors = {}
     waitFor("rejected input responses", function()
       local items, err = client:poll()
@@ -205,9 +214,10 @@ local function play()
           errors[#errors + 1] = item.msg.reason
         end
       end
-      return #errors >= 4
+      return #errors >= 6
     end)
-    equal(table.concat(errors, ","), "stale sequence,stale sequence,wrong seat,invalid input", "rejected inputs")
+    equal(table.concat(errors, ","),
+      "stale sequence,stale sequence,wrong seat,invalid input,invalid input,invalid input", "rejected inputs")
     print("rejected frames: " .. table.concat(errors, ", "))
     mark("rejections", true)
   end

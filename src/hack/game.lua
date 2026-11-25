@@ -1,8 +1,11 @@
 -- Live game binding for the real hero and the local control queue.
 
 local Engine = import("hack/engine.lua")
+local Actions = import("protocol/actions.lua")
+local Input = import("client/input.lua")
 local Inputs = import("dev/inputs.lua")
 local Messages = import("protocol/messages.lua")
+local Session = import("protocol/session.lua")
 
 local Game = {}
 
@@ -136,7 +139,7 @@ function Game:ReadLocalInput()
   return {
     moveX = held(readControl, "Right") - held(readControl, "Left"),
     moveY = held(readControl, "Down") - held(readControl, "Up"),
-    buttons = held(readControl, "Attack1"),
+    buttons = held(readControl, "Attack1") * Actions.bit("Attack1"),
   }
 end
 
@@ -146,6 +149,25 @@ function Game:PushInput(playerId)
   end
   -- The retail SendControlInput Lua action returns without dispatching input.
   return false, "the retail Lua API cannot submit native player movement"
+end
+
+function Game:SubmitInput(tick, playerId, state)
+  local slot = self.session.slots[playerId]
+  if not slot or not slot.connected then
+    return false, "seat " .. playerId .. " is disconnected"
+  end
+  self.inputSequences = self.inputSequences or {}
+  local seq = (self.inputSequences[playerId] or 0) + 1
+  local frame = Input.frame(tick, playerId, state, seq)
+  if not Messages.validInput(frame, Session.MAX_PLAYERS) then
+    return false, "invalid sample"
+  end
+  self.inputSequences[playerId] = seq
+  local accepted, reason = self:PushInput(playerId, frame)
+  if accepted == false then
+    return false, "unsupported " .. reason
+  end
+  return true
 end
 
 function Game:FinishEnter(result)
@@ -231,11 +253,10 @@ function Game:BeginPlayback(script)
   self.script = script
   self.playing = true
   self.playTime = 0
-  self.playFrame = 0
   self.playResult = nil
 end
 
-function Game:Step(dt)
+function Game:Step(dt, tick)
   if not self.playing or not self.script then
     return
   end
@@ -245,17 +266,16 @@ function Game:Step(dt)
   end
 
   self.playTime = (self.playTime or 0) + math.max(0, math.min(dt, 0.05))
-  self.playFrame = (self.playFrame or 0) + 1
   local active = false
-  for playerId = 1, 4 do
+  for playerId = 1, Session.MAX_PLAYERS do
     local slot = self.session.slots[playerId]
     local steps = self.script.steps[playerId]
     if slot and slot.connected and steps and #steps > 0 then
       local mx, my, hasStep = Inputs.stick(self.script, playerId, self.playTime)
-      local accepted, reason = self:PushInput(playerId, Messages.input(self.playFrame, playerId, mx, my))
-      if accepted == false then
+      local accepted, reason = self:SubmitInput(tick, playerId, { moveX = mx, moveY = my })
+      if not accepted then
         self.playing = false
-        self.playResult = "unsupported " .. reason
+        self.playResult = reason
         return
       end
       active = active or hasStep
