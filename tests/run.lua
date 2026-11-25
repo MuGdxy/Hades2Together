@@ -283,6 +283,7 @@ test("queued commands add a fake player", function()
   eq(Bridge.statusText(console):find("2:Second Mel:up", 1, true) ~= nil, true)
 end)
 
+assert(loadfile(root .. "/tests/tcp.lua"))()(test, eq)
 assert(loadfile(root .. "/tests/reload.lua"))()(root, test, eq)
 
 test("rules modules do not touch the game", function()

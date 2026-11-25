@@ -4,6 +4,9 @@
 
 local Codec = {}
 
+Codec.MAX_BYTES = 64 * 1024
+local MAX_DEPTH = 24
+
 local function isArray(value)
   local count = 0
   for key in pairs(value) do
@@ -60,7 +63,27 @@ local function encode(value)
   return table.concat(parts)
 end
 
-local function decodeAt(data, index)
+local function span(data, index, delimiter)
+  local stop = data:find(delimiter, index, true)
+  if not stop then
+    error("codec missing " .. delimiter)
+  end
+  return data:sub(index, stop - 1), stop + 1
+end
+
+local function countAt(data, index, delimiter)
+  local digits, cursor = span(data, index, delimiter)
+  local count = tonumber(digits)
+  if not digits:match("^%d+$") or not count or count > #data - cursor + 1 then
+    error("codec invalid length or count")
+  end
+  return count, cursor
+end
+
+local function decodeAt(data, index, depth)
+  if depth > MAX_DEPTH then
+    error("codec nesting limit")
+  end
   local tag = data:sub(index, index)
   if tag == "" then
     error("codec truncated")
@@ -77,63 +100,38 @@ local function decodeAt(data, index)
     return false, index
   end
   if tag == "n" then
-    local semi = data:find(";", index, true)
-    if not semi then
-      error("codec truncated number")
-    end
-    local number = tonumber(data:sub(index, semi - 1))
-    if not number then
+    local token, cursor = span(data, index, ";")
+    local number = tonumber(token)
+    if not number or number ~= number or math.abs(number) == math.huge then
       error("codec bad number")
     end
-    return number, semi + 1
+    return number, cursor
   end
   if tag == "s" then
-    local colon = data:find(":", index, true)
-    if not colon then
-      error("codec truncated string")
-    end
-    local length = tonumber(data:sub(index, colon - 1))
-    if not length or length < 0 then
-      error("codec bad string length")
-    end
-    local startAt = colon + 1
+    local length, startAt = countAt(data, index, ":")
     local finish = startAt + length - 1
-    if finish > #data then
-      error("codec truncated string bytes")
-    end
     return data:sub(startAt, finish), finish + 1
   end
 
-  local function takeCount(from)
-    local semi = data:find(";", from, true)
-    if not semi then
-      error("codec truncated count")
-    end
-    local count = tonumber(data:sub(from, semi - 1))
-    if not count or count < 0 then
-      error("codec bad count")
-    end
-    return count, semi + 1
-  end
-
   if tag == "a" then
-    local count, cursor = takeCount(index)
+    local count, cursor = countAt(data, index, ";")
     local array = {}
     for item = 1, count do
-      array[item], cursor = decodeAt(data, cursor)
+      array[item], cursor = decodeAt(data, cursor, depth + 1)
     end
     return array, cursor
   end
   if tag == "o" then
-    local count, cursor = takeCount(index)
-    local object = {}
+    local count, cursor = countAt(data, index, ";")
+    local object, seen = {}, {}
     for _ = 1, count do
       local key
-      key, cursor = decodeAt(data, cursor)
-      if type(key) ~= "string" then
-        error("codec object key was not a string")
+      key, cursor = decodeAt(data, cursor, depth + 1)
+      if type(key) ~= "string" or seen[key] then
+        error("codec invalid or repeated object key")
       end
-      object[key], cursor = decodeAt(data, cursor)
+      seen[key] = true
+      object[key], cursor = decodeAt(data, cursor, depth + 1)
     end
     return object, cursor
   end
@@ -149,7 +147,10 @@ function Codec.decode(data)
   if type(data) ~= "string" then
     return nil, "codec data must be a string"
   end
-  local ok, value, cursor = pcall(decodeAt, data, 1)
+  if #data > Codec.MAX_BYTES then
+    return nil, "codec byte limit"
+  end
+  local ok, value, cursor = pcall(decodeAt, data, 1, 0)
   if not ok then
     return nil, value
   end

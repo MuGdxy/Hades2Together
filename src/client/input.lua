@@ -2,7 +2,7 @@ local Messages = import("protocol/messages.lua")
 
 local Input = {}
 
-function Input.frame(tick, playerId, state)
+function Input.frame(tick, playerId, state, seq)
   state = state or {}
   return Messages.input(
     tick,
@@ -11,7 +11,8 @@ function Input.frame(tick, playerId, state)
     state.moveY or 0,
     state.buttons or 0,
     state.aimX or 0,
-    state.aimY or 0
+    state.aimY or 0,
+    seq
   )
 end
 
