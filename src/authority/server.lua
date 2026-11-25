@@ -9,8 +9,7 @@ Server.__index = Server
 local HANDSHAKE_SECONDS = 2
 local MAX_CONNECTIONS = 2 * Session.MAX_PLAYERS
 
-function Server.listen(socket, port, engine, options)
-  local authority = Authority.start(engine, options)
+local function listen(socket, port)
   local listener, err = Tcp.listen(socket, port)
   if not listener then
     return nil, err
@@ -19,9 +18,27 @@ function Server.listen(socket, port, engine, options)
     listener = listener,
     clock = socket.gettime,
     session = Session.new("serve"),
-    authority = authority,
     peers = {},
   }, Server)
+end
+
+function Server.listen(socket, port, engine, options)
+  local authority = Authority.start(engine, options)
+  local server, err = listen(socket, port)
+  if server then
+    server.authority = authority
+  end
+  return server, err
+end
+
+function Server.observe(socket, port, readActors)
+  assert(type(readActors) == "function", "observer requires an actor reader")
+  local server, err = listen(socket, port)
+  if server then
+    server.readActors = readActors
+    server.tick = 0
+  end
+  return server, err
 end
 
 function Server:port()
@@ -58,7 +75,7 @@ function Server:join(peer, message, now)
   if not playerId then
     return refuse(peer, status, now)
   end
-  if status == "joined" then
+  if self.authority and status == "joined" then
     local ok, err = Authority.addPlayer(self.authority, playerId, { name = message.name })
     if not ok then
       Session.drop(self.session, playerId)
@@ -120,10 +137,12 @@ function Server:poll()
       if stream.closed or stream.closing then
         break
       end
-      if peer.playerId then
-        acceptInput(peer, item.msg)
-      else
+      if not peer.playerId then
         self:join(peer, item.msg, now)
+      elseif self.readActors then
+        reject(peer, "observer connection is read-only")
+      else
+        acceptInput(peer, item.msg)
       end
     end
     stream:flush()
@@ -143,21 +162,32 @@ function Server:poll()
   return true
 end
 
+local function solve(server)
+  local inputs = {}
+  for _, peer in ipairs(server.peers) do
+    for _, input in ipairs(peer.inputs) do
+      input.tick = server.authority.tick + 1
+      inputs[#inputs + 1] = input
+    end
+    peer.inputs = {}
+  end
+  return Authority.step(server.authority, inputs)
+end
+
 -- Poll alone during setup. Begin stepping when the authority starts the encounter.
 function Server:step()
   local ok, err = self:poll()
   if not ok then
     return nil, err
   end
-  local inputs = {}
-  for _, peer in ipairs(self.peers) do
-    for _, input in ipairs(peer.inputs) do
-      input.tick = self.authority.tick + 1
-      inputs[#inputs + 1] = input
-    end
-    peer.inputs = {}
+  local result
+  if self.readActors then
+    local actors = self.readActors()
+    self.tick = self.tick + 1
+    result = { snapshot = Messages.snapshot(self.tick, actors.heroes, actors.enemies), commands = {} }
+  else
+    result = solve(self)
   end
-  local result = Authority.step(self.authority, inputs)
   local decisions
   if #result.commands > 0 then
     decisions = Messages.event("decisions", { tick = result.snapshot.tick, commands = result.commands })

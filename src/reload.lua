@@ -9,6 +9,8 @@ local active
 local control
 local gameState
 local frameError
+local observer
+local nextSnapshot = 0
 
 local function candidateRuntime()
   local env = setmetatable({}, { __index = pluginEnv })
@@ -46,7 +48,22 @@ local function candidateRuntime()
 end
 
 local function frame()
-  local ok, err = pcall(active.Menu.pump, control, gameState)
+  local ok, err
+  if observer then
+    local now = observer.clock()
+    if now < nextSnapshot then
+      return
+    end
+    nextSnapshot = now + 0.05
+    ok, err = pcall(function()
+      local result, failure = observer:step()
+      assert(result, failure)
+    end)
+  elseif not config.observerSnapshots then
+    ok, err = pcall(active.Menu.pump, control, gameState)
+  else
+    return
+  end
   if not ok and not frameError then
     frameError = true
     rom.log.warning("[Hades2Together] control sync failed: " .. tostring(err))
@@ -59,11 +76,22 @@ local function prepare()
     return candidate
   end
 
+  if config.observerSnapshots then
+    return candidate, nil, candidate.Game.new()
+  end
   local session = candidate.Session.new(config.role)
   local slot = candidate.Session.join(session, config.playerName or "Player")
   local newControl = candidate.Menu.new(session)
   local newGame = candidate.Game.new(session)
   return candidate, newControl, newGame, slot
+end
+
+local function startObserver()
+  local Server = envyImport("authority/server.lua")
+  observer = assert(Server.observe(require("socket"), config.port, function()
+    return gameState:ReadActors()
+  end))
+  rom.log.info("[Hades2Together] observing on 127.0.0.1:" .. observer:port())
 end
 
 function Reload.load()
@@ -86,6 +114,13 @@ function Reload.load()
     rom.gui.add_always_draw_imgui(frame)
   end
   if newGame then
+    if config.observerSnapshots then
+      local started, err = pcall(startObserver)
+      if not started then
+        rom.log.warning("[Hades2Together] observer startup failed: " .. tostring(err))
+      end
+      return
+    end
     gameState:Install()
     active.Menu.publish(control, gameState, "waiting for first game update")
     print("[Hades2Together] status " .. control.statusPath)
