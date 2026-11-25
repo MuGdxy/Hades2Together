@@ -20,7 +20,7 @@
 .\tools\h2t.ps1 status
 ```
 
-`h2t.ps1 status` 显示最近一批命令的确认。看到 `queue=waiting for game update` 时，队列文件仍在等待游戏处理。最后一行的 `hero=absent` 表示游戏里还没有可用的英雄，`2:Fake1:spawned=<id>` 表示这个席位已有身体。实际地图由游戏的 `CurrentRun` 提供，英雄和额外身体的 `x`、`y` 由引擎的 `GetLocation` 提供。
+`h2t.ps1 status` 显示最近一批命令的确认。看到 `queue=waiting for game update` 时，队列文件仍在等待游戏处理。最后一行的 `hero=absent` 表示游戏里还没有可用的英雄。实际地图由游戏的 `CurrentRun` 提供，英雄的 `x`、`y` 由引擎的 `GetLocation` 提供。`2:Fake1:unsupported` 表示席位已加入，但没有可用的原生玩家输入槽。
 
 `player add` 不写名字时，名字从 `Fake1` 开始递增。本地玩家启动时占 1 号席，名字来自 `playerName`。
 
@@ -55,6 +55,6 @@ Start-Process -FilePath (Join-Path $ship 'Hades2.exe') -WorkingDirectory $ship -
 .\tools\h2t.ps1 status
 ```
 
-`play` 读取 `%USERPROFILE%\Hades2Together\inputs.txt`。文件不存在时，会先复制仓库里的 `control/inputs.txt`。格式是 `席位 moveX moveY 秒数`，可选 `name 席位 名字`。四个席位按这个序列走动：移动时播跑步动画，停下播待机，面朝移动方向。1 号是真正的英雄，2 到 4 号是同一套梅利诺埃模型。
+`play` 读取 `%USERPROFILE%\Hades2Together\inputs.txt`。文件不存在时，会先复制仓库里的 `control/inputs.txt`。格式是 `席位 moveX moveY 秒数`，可选 `name 席位 名字`。解析出的摇杆状态通过 `Engine.PushInput` 提交。
 
-播放时用 `status` 可看到 `play=running` 和四个独立 ID，默认序列约五秒后显示 `play=finished`。
+Steam v1.143476 的 Lua 接口无法向英雄提交原生移动输入，也没有 2–4 号席的原生输入通道。实机状态显示 `play=unsupported`，席位仍可加入和移除。[输入接口验证](blockers.md)

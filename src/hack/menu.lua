@@ -74,7 +74,6 @@ function Menu.pump(control, game)
   end
   control.lastClock = now
   game:Install()
-  game:RefreshBodies()
   game:Step(dt)
   Menu.publish(control, game, "polling")
 end

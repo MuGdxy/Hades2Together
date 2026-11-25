@@ -55,17 +55,4 @@ function Inputs.stick(script, slot, time)
   return 0, 0
 end
 
-function Inputs.integrate(x, y, mx, my, dt, speed)
-  local mag = math.sqrt(mx * mx + my * my)
-  if mag > 1 then
-    mx = mx / mag
-    my = my / mag
-    mag = 1
-  end
-  if mag < 0.01 then
-    return x, y, false
-  end
-  return x + mx * speed * dt, y + my * speed * dt, true
-end
-
 return Inputs

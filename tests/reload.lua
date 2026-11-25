@@ -7,7 +7,7 @@ end
 
 local function mockLoader(root)
   local mock = { edits = {}, frames = {}, imports = {}, maps = {}, warnings = {},
-    info = {}, polls = 0, clock = 0, spawned = 0, entered = {}, positions = {},
+    info = {}, polls = 0, clock = 0, entered = {}, inputs = {}, forbiddenCalls = {},
     locations = {}, threads = {}, allowSave = false }
   local controlPath = "mock-home\\Hades2Together\\"
   local commandsPath = controlPath .. "commands.txt"
@@ -32,18 +32,15 @@ local function mockLoader(root)
   function game.OnAnyLoad(args)
     mock.maps[#mock.maps + 1] = args[1]
   end
-  function game.SpawnObstacle()
-    mock.spawned = mock.spawned + 1
-    return 100 + mock.spawned
-  end
   function game.GetLocation(args)
     return mock.locations[args.Id] or { X = 0, Y = 0 }
   end
-  function game.Teleport(args)
-    mock.positions[args.Id] = args
-    local origin = args.DestinationId and game.GetLocation({ Id = args.DestinationId })
-    mock.locations[args.Id] = { X = (origin and origin.X or 0) + args.OffsetX,
-      Y = (origin and origin.Y or 0) + args.OffsetY }
+  for _, method in ipairs({ "SpawnObstacle", "SpawnUnit", "Move", "Stop", "Teleport", "SendControlInput",
+    "SetAnimation", "SetAngle", "SetGoalAngle" }) do
+    game[method] = function()
+      mock.forbiddenCalls[#mock.forbiddenCalls + 1] = method
+      error("unexpected call to " .. method)
+    end
   end
   function game.LoadMap(args)
     mock.entered[#mock.entered + 1] = args.Name
@@ -53,6 +50,10 @@ local function mockLoader(root)
   local public = setmetatable({ _PLUGIN = { plugins_mod_folder_path = root .. "/src" } }, {
     __index = _G,
   })
+  public.captureInput = function(seat, frame)
+    mock.inputs[#mock.inputs + 1] = { seat = seat, frame = frame }
+    return true
+  end
   local private = setmetatable({ public = public }, { __index = public })
   public.rom = {
     game = game,
@@ -145,35 +146,47 @@ local function mockLoader(root)
     files["mock-content/Maps/" .. mapName .. ".map_text"] = nil
   end
 
+  function mock:setInputs(text)
+    files[controlPath .. "inputs.txt"] = text
+  end
+
   return mock
 end
 
 return function(root, test, eq)
-  test("loader reload keeps live bodies and playback and installs one control poll", function()
+  test("loader reload preserves playback input frames and installs one control poll", function()
     local mod = mockLoader(root)
     mod.game.CurrentRun = { CurrentRoom = { Name = "F_Test" }, Hero = { ObjectId = 99 } }
     mod.game.GameState = { IllegalConversationModification = true }
+    local gameSource, replacements = readSource(root, "hack/game.lua")
+      :gsub("function Game:PushInput%(playerId%).-\nend",
+        "function Game:PushInput(playerId, frame)\n  return captureInput(playerId, frame)\nend")
+    eq(replacements, 1)
+    mod.edits["hack/game.lua"] = gameSource
     mod:reload()
     eq(#mod.frames, 1)
     eq(#mod.imports, 0)
     local onMap = assert(mod.maps[1])
     mod:queue("player add Guest\nenter F_Test\nplay\n")
     local first = mod:poll(0)
-    assert(first:find("2:Guest:spawned=101:x=180:y=40", 1, true), first)
     assert(first:find("OK play", 1, true), first)
     eq(#mod.entered, 0)
     assert(first:find("enter=ready F_Test", 1, true), first)
-    eq(mod.spawned, 6)
-    local moving = mod:poll(0.03125)
-    assert(moving:find("2:Guest:spawned=101:x=196:y=40", 1, true), moving)
+    mod:poll(0.03125)
+    eq(#mod.inputs, 2)
+    eq(mod.inputs[1].seat, 2)
+    eq(mod.inputs[1].frame.t, "in")
+    eq(mod.inputs[1].frame.playerId, 2)
+    eq(mod.inputs[1].frame.tick, 1)
+    eq(mod.inputs[2].frame.moveX, 1)
+    eq(mod.inputs[2].frame.moveY, 0)
 
-    mod.edits["hack/game.lua"] = readSource(root, "hack/game.lua")
+    mod.edits["hack/game.lua"] = gameSource
       :gsub('"bodies hero="', '"bodies updated hero="')
       :gsub('return table.concat%(parts, " "%)', 'return table.concat(parts, " ") .. " map=" .. tostring(self.map)')
       :gsub("self.map = name", 'self.map = name .. "-updated"')
     mod.edits["dev/inputs.lua"] = readSource(root, "dev/inputs.lua")
-      :gsub("x %+ mx %* speed %* dt, y %+ my %* speed %* dt",
-        "x + mx * speed * dt * 2, y + my * speed * dt * 2")
+      :gsub("return step.mx, step.my, true", "return step.mx, -step.my, true")
     mod:queue("player add Guest\n")
     mod:reload()
     mod:reload()
@@ -187,17 +200,41 @@ return function(root, test, eq)
     local updated = mod:poll(0.0625)
     assert(updated:find("bodies updated hero=99", 1, true), updated)
     assert(updated:find("OK rejoined 2 Guest", 1, true), updated)
-    assert(updated:find("2:Guest:spawned=101:x=196:y=73", 1, true), updated)
-    eq(mod.positions[101].OffsetX, 196.875)
-    eq(mod.positions[101].OffsetY, 73.75)
+    eq(#mod.inputs, 3)
+    eq(mod.inputs[3].frame.tick, 3)
+    eq(mod.inputs[3].frame.moveX, 0)
+    eq(mod.inputs[3].frame.moveY, -1)
     eq(mod.polls, 3)
-    eq(mod.spawned, 6)
+    eq(#mod.forbiddenCalls, 0)
     eq(#mod.entered, 0)
     local nextReport = mod:poll(0.09375)
     assert(nextReport:find("OK rejoined 2 Guest", 1, true), nextReport)
     onMap({ name = "NewRoom" })
     local changedMap = mod:poll(0.125)
     assert(changedMap:find("map=NewRoom-updated", 1, true), changedMap)
+    eq(#mod.warnings, 0)
+  end)
+
+  test("live CLI playback refuses unsupported seats without spawning or moving actors", function()
+    local mod = mockLoader(root)
+    mod.game.CurrentRun = { CurrentRoom = { Name = "F_Combat01" }, Hero = { ObjectId = 99 } }
+    mod.locations[99] = { X = 12, Y = 34 }
+    mod:setInputs("1 1 0 1\n2 0 1 1\n")
+    mod:reload()
+    mod:queue("play\n")
+    local unsupported = mod:poll(0)
+    assert(unsupported:find("hero=99:x=12:y=34", 1, true), unsupported)
+    assert(unsupported:find("play=unsupported the retail Lua API cannot submit native player movement", 1, true), unsupported)
+    assert(unsupported:find("2:P2:unsupported", 1, true), unsupported)
+    mod:reload()
+    eq(mod:poll(1), unsupported)
+
+    mod:setInputs("2 1 0 1\n")
+    mod:queue("play\n")
+    local extraSeat = mod:poll(2)
+    assert(extraSeat:find("play=unsupported seat 2 has no native player input slot", 1, true), extraSeat)
+    eq(mod:poll(3), extraSeat)
+    eq(#mod.forbiddenCalls, 0)
     eq(#mod.warnings, 0)
   end)
 

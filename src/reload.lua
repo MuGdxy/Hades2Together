@@ -27,10 +27,10 @@ local function candidateRuntime()
   local required = {
     ["hack/menu.lua"] = { "new", "pump", "publish" },
     ["hack/game.lua"] = { "new", "Install", "OnMap", "CheckEnter",
-      "Enter", "BeginPlayback", "RefreshBodies", "Step", "BodyReport" },
+      "Enter", "BeginPlayback", "PushInput", "Step", "BodyReport" },
     ["dev/bridge.lua"] = { "sync", "statusText" },
     ["dev/console.lua"] = { "new", "execute" },
-    ["dev/inputs.lua"] = { "parse", "stick", "integrate" },
+    ["dev/inputs.lua"] = { "parse", "stick" },
     ["protocol/session.lua"] = { "new", "join", "count", "drop" },
   }
   for path, methods in pairs(required) do

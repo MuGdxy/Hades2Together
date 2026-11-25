@@ -26,7 +26,7 @@
 (Get-Item .\ready.lua).LastWriteTime = Get-Date
 ```
 
-- 可以热更新 `ready.lua`、`hack/menu.lua`、`hack/game.lua`、`dev/` 和 `ready.lua` 加载的其他模块。保持会话、控制状态、游戏状态和已解析的播放脚本的数据格式兼容。已排队命令由下一次控制轮询处理。席位、身体 ID 和播放进度继续使用原值。已经调度的 `enter` 和 `play` 保留当前进度。
+- 可以热更新 `ready.lua`、`hack/menu.lua`、`hack/game.lua`、`dev/` 和 `ready.lua` 加载的其他模块。保持会话、控制状态、游戏状态和已解析的播放脚本的数据格式兼容。已排队命令由下一次控制轮询处理。席位、确认和播放进度继续使用原值。已经调度的 `enter` 和 `play` 保留当前进度。
 - 运行模块有语法错误、顶层执行错误或缺少控制入口时，日志会写 `[Hades2Together] Lua load failed:`，旧版控制继续轮询。修正并保存后，看到 `[Hades2Together] Lua reloaded` 即可验证下一次轮询用了新代码。加载模块时应只定义代码和数据，游戏调用及控制操作留到回调执行时。
 - 改 `main.lua`、`reload.lua`、`config.lua`、`def.lua`、依赖或已存活状态的数据结构需要重启游戏。热更新重新挂接控制轮询，游戏持有的 `OnAnyLoad` 回调继续调用当前模块的方法。直接编辑 `main.lua` 时，加载器会先清除旧回调，入口本身的语法错误需要先修正才能恢复轮询。
 
@@ -39,7 +39,7 @@
 | 方法 | 用途 |
 | --- | --- |
 | `BindHero` | 把席位绑成世界里的一个单位 |
-| `PushInput` | 把一帧操作写给这个单位 |
+| `PushInput` | 提交一帧玩家输入，游戏接口不支持时返回 `false` 和原因 |
 | `ReadActors` | 读出英雄和敌人的位置与血量 |
 | `PullEvents` | 取出这一拍里发生的命中、死亡 |
 | `RunAsHero` | 引擎要一个当前英雄时，把这次调用绑到指定席位 |
