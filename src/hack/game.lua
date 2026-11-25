@@ -159,11 +159,11 @@ function Game:DropBody(playerId)
 end
 
 local function resolveLoadMap()
+  if type(import_as_fallback) == "function" and type(rom) == "table" and type(rom.game) == "table" then
+    pcall(import_as_fallback, rom.game)
+  end
   if type(LoadMap) == "function" then
     return LoadMap
-  end
-  if type(game) == "table" and type(game.LoadMap) == "function" then
-    return game.LoadMap
   end
   if type(rom) == "table" and type(rom.game) == "table" and type(rom.game.LoadMap) == "function" then
     return rom.game.LoadMap
@@ -175,8 +175,12 @@ function Game:Enter(mapName)
   if not loadMap then
     if not self.loggedLoadMap then
       self.loggedLoadMap = true
-      local gameType = type(game) == "table" and type(game.LoadMap) or "nogame"
-      print("[Hades2Together] LoadMap missing global=" .. type(LoadMap) .. " game=" .. gameType)
+      local gameTable = type(rom) == "table" and type(rom.game) or "nil"
+      local loadType = "nil"
+      if type(rom) == "table" and type(rom.game) == "table" then
+        loadType = type(rom.game.LoadMap)
+      end
+      print("[Hades2Together] LoadMap missing rom.game=" .. gameTable .. " LoadMap=" .. loadType)
     end
     self.enterResult = "waiting"
     return false
