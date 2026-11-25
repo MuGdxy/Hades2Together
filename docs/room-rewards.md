@@ -48,6 +48,14 @@ python tests/net_smoke.py --lua lua --stock-room
 
 停止展示奖励可能是物件关掉了使用、准备选择或消失。原版选择界面的 `CurrentLootData` 和 `ScreenAnchors.ChoiceScreen.Source` 只能提供上下文，实际选择的原版提交另有路径。观察模式省略未验证的奖励集合、玩家资格和领取凭据。
 
+### 原版提交边界（源码）
+
+- **祝福。** `InteractLogic.lua:303–354, 621–739` 的 `OnUsed` 给出源物件 `TriggeredByTable` 和交互者 `UserTable`。有些使用记录在检查前就写入。拾取将物件禁用并打开选择，之后原版界面才根据输入可用性和实际按钮调用选择函数（`UILogic.lua:910–931`、`UpgradeChoiceLogic.lua:501`）。`HandleUpgradeChoiceSelection`（940–1066）在处理前先设置 `ChoiceMade`，再将实际选择加入 `CurrentRun.Hero`，叠层时修改已有特质。普通祝福的实质结果是 `AddTraitToHero` 转入 `AddTraitData`，后者在实际角色的 `Traits` 中插入带 ID 的原版实例（`TraitLogic.lua:471–493, 873–912`）。原版升级替换与额外祝福可在一次选择流程里产生多个变化；应按同一原版选择流程核对最终结果。全局的 `LastUpgradeChoice` 也由其他事件写入，`LootChoiceHistory` 仅保留深度、奖励名与选择内容。
+- **免费消耗品。** `UseConsumableItem` 保留源物件和交互者入参，在检查死亡处理、使用限制、资源与阻止交互的敌人后才进入执行。禁用物件与演出先于效果；免费的原版分支跳过购买记账（`InteractLogic.lua:979–1037`）。已观察的 `MaxHealthDrop` 调用 `AddMaxHealth(amount, source, args)`，此处 `source` 是原物件，实际增益通过 `AddTraitToHero` 落到 `CurrentRun.Hero`，可能延后执行（`InteractLogic.lua:1055–1057`、`RoomLogic.lua:2722–2739`）。针对这类物件可核对该角色新增的 `RoomRewardMaxHealthTrait` 实例及其 `MaxHealth` 属性变化（`TraitData.lua:1302–1327`）。其他消耗品可能改全局资源，或用 `user.ObjectId` 应用效果（`InteractLogic.lua:1088–1105`、`ResourceLogic.lua:7–28`），受益人的判定需按实际效果入口验证。
+- **区分状态变化。** 重复奖励可能重新启用物件（`InteractLogic.lua:1118–1129`），金币转换也可清除必需物件并销毁目标（`GiftLogic.lua:90–114`），换房重新初始化地图对象与菜单上下文（`RoomLogic.lua:131–141, 184–193, 4360–4417`）。因此领取核对需同时关联原房间实例、原物件、交互者和实际受益角色；跨房时关闭尚无提交证据的旧机会，已确认的回执可按旧身份保留。门解锁、对象消失、血量变化和历史计数各自均缺少这条关联。
+
+现有只读表可以核对同一房间里的角色特质和菜单来源。源码审计未发现同时暴露原物件、交互者及已提交效果的原版只读回执。后续在原生输入映射可用时，用固定输入表的 `Use` 走普通世界交互，用验证过的原版菜单 `Select` 选择并核对实际角色实例变化；免费消耗品只走普通 `Use`。在同一房间分别采样使用前、菜单打开或效果提交后的状态，再独立验证取消、对象失效及换房。当前未运行这些交互。
+
 ## 后续原版接入
 
 奖励均等指同一次经过验证的原版机会对每个符合条件的参与者提供一次原版交互。每席由该席原版上下文执行检查和选择，结果可以不同。已证实的零售流程只有当前英雄的赋予上下文；多人归属、同时选择或依次选择的原版入口仍待验证。需要确认 `OnUsed` 的真实角色/物件映射、原版选项归属和提交回执。用房间实例、遭遇实例、奖励机会和已绑定席位组合关联回执；等原版确认再从 `claiming` 进入 `consumed`。不得由网络自行选择或生成奖励，也不得复制一次 `AddTraitToHero` 结果、切换当前英雄或替原版开放出口。
