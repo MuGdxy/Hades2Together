@@ -139,18 +139,36 @@ function Game:DropBody(playerId)
   self.bodies[playerId] = nil
 end
 
+local function resolveLoadMap()
+  if type(LoadMap) == "function" then
+    return LoadMap
+  end
+  if type(game) == "table" and type(game.LoadMap) == "function" then
+    return game.LoadMap
+  end
+  if type(rom) == "table" and type(rom.game) == "table" and type(rom.game.LoadMap) == "function" then
+    return rom.game.LoadMap
+  end
+end
+
 function Game:Enter(mapName)
-  if type(LoadMap) ~= "function" then
+  local loadMap = resolveLoadMap()
+  if not loadMap then
+    if not self.loggedLoadMap then
+      self.loggedLoadMap = true
+      local gameType = type(game) == "table" and type(game.LoadMap) or "nogame"
+      print("[Hades2Together] LoadMap missing global=" .. type(LoadMap) .. " game=" .. gameType)
+    end
     self.enterResult = "waiting"
     return false
   end
   local ok, err = pcall(function()
     if type(thread) == "function" then
       thread(function()
-        LoadMap({ Name = mapName })
+        loadMap({ Name = mapName })
       end)
     else
-      LoadMap({ Name = mapName })
+      loadMap({ Name = mapName })
     end
   end)
   if ok then
