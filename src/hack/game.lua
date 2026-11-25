@@ -139,10 +139,38 @@ function Game:DropBody(playerId)
   self.bodies[playerId] = nil
 end
 
+function Game:Enter(mapName)
+  if type(LoadMap) ~= "function" then
+    self.enterResult = "waiting"
+    return false
+  end
+  local ok, err = pcall(function()
+    if type(thread) == "function" then
+      thread(function()
+        LoadMap({ Name = mapName })
+      end)
+    else
+      LoadMap({ Name = mapName })
+    end
+  end)
+  if ok then
+    self.enterResult = "requested " .. mapName
+    print("[Hades2Together] enter " .. mapName)
+  else
+    self.enterResult = "failed " .. tostring(err)
+    print("[Hades2Together] enter failed: " .. tostring(err))
+  end
+  return true
+end
+
 function Game:BodyReport()
   local heroId = self:HeroId()
   if not heroId then
-    return "bodies hero=absent"
+    local line = "bodies hero=absent"
+    if self.enterResult then
+      line = line .. " enter=" .. self.enterResult
+    end
+    return line
   end
   local parts = { "bodies hero=" .. tostring(heroId) }
   for playerId = 2, 4 do

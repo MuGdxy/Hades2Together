@@ -6,6 +6,7 @@
 #   .\tools\h2t.ps1 player add
 #   .\tools\h2t.ps1 player add "Second Melinoe"
 #   .\tools\h2t.ps1 player remove 2
+#   .\tools\h2t.ps1 enter
 #   .\tools\h2t.ps1 status
 
 [CmdletBinding(PositionalBinding = $false)]
@@ -37,6 +38,13 @@ function Get-ControlStatus {
 if ($Command -and $Command.Count -gt 0) {
     $head = $Command[0]
     $action = if ($Command.Count -ge 2) { $Command[1] } else { "" }
+    if ($head -eq "enter") {
+        $map = "F_Test"
+        if ($Command.Count -ge 2) { $map = $Command[1] }
+        Add-ControlCommand "enter $map"
+        Write-Output "queued enter $map"
+        exit 0
+    }
     if ($head -eq "status" -or $head -eq "players") {
         Write-Output (Get-ControlStatus)
         exit 0
@@ -60,7 +68,7 @@ if ($Command -and $Command.Count -gt 0) {
         Write-Output "queued $line"
         exit 0
     }
-    Write-Error "usage: h2t.ps1 [status | players | player add [name] | player remove <slot|name>]"
+    Write-Error "usage: h2t.ps1 [enter [map] | status | players | player add [name] | player remove <slot|name>]"
     exit 2
 }
 

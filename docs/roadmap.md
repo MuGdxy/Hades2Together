@@ -1,6 +1,12 @@
 # 开发路径
 
-离线测试在仓库根目录执行 `lua tests/run.lua`。这一套测试必须在每个阶段结束后仍然通过。进游戏的验收另计，写在对应阶段的完成标准里。
+离线测试在仓库根目录执行 `lua tests/run.lua`。这一套测试必须在每个阶段结束后仍然通过。
+
+GUI 测试等 CLI 全部通过后再做。CLI 通过指这三件事：
+
+- `lua tests/run.lua` 通过。
+- `.\tools\h2t.ps1 player add`、`player remove`、`status` 能排队并读回席位。
+- `.\tools\h2t.ps1 enter` 在游戏窗口处于前台时进入 `F_Test`，随后 `status` 最后一行出现 `spawned=`。在这之前不点游戏画面。
 
 ## 阶段 0：边界
 

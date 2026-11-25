@@ -13,6 +13,7 @@
 不打开页面时，也可以直接排队：
 
 ```powershell
+.\tools\h2t.ps1 enter
 .\tools\h2t.ps1 player add
 .\tools\h2t.ps1 player add "Second Melinoe"
 .\tools\h2t.ps1 player remove 2
@@ -23,4 +24,6 @@
 
 `player add` 不写名字时，名字从 `Fake1` 开始递增。本地玩家启动时占 1 号席，名字来自 `playerName`。
 
-这些操作只改席位。把假玩家变成世界里的单位是里程碑 2 的 `BindHero`。
+`enter` 不经过存档栏，直接加载 `F_Test`。这间房不是正式开局房，游戏会跳过存档写入，不会覆盖现有存档。也可以写 `enter F_Combat01` 换一张图。
+
+进入世界前，最后一行是 `bodies hero=absent`。`enter` 被游戏执行后，额外席位应变成 `spawned=<id>`。窗口不在前台时命令会先排队。

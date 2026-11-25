@@ -81,7 +81,16 @@ function Console.execute(console, line)
   local session = console.session
 
   if head == "help" then
-    return "OK commands: help | status | players | player add [name] | player remove <slot|name>"
+    return "OK commands: help | status | players | player add [name] | player remove <slot|name> | enter [map]"
+  end
+
+  if head == "enter" then
+    local mapName = words[2] or "F_Test"
+    if not mapName:match("^[%w_]+$") then
+      return "ERR bad map"
+    end
+    console.enterMap = mapName
+    return "OK enter " .. mapName
   end
 
   if head == "status" then

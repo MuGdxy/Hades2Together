@@ -31,6 +31,11 @@ local function pump()
     return
   end
   Bridge.sync(console, commandsPath, statusPath)
+  if console.enterMap then
+    if Game:Enter(console.enterMap) then
+      console.enterMap = nil
+    end
+  end
   Game:Install()
   Game:RefreshBodies()
   local report = io.open(statusPath, "ab")
