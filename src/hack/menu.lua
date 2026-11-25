@@ -3,6 +3,7 @@
 
 local Bridge = import("dev/bridge.lua")
 local Console = import("dev/console.lua")
+local Inputs = import("dev/inputs.lua")
 local Game = import("hack/game.lua")
 
 local Menu = {}
@@ -26,6 +27,21 @@ local function controlPaths()
   return root .. "\\commands.txt", root .. "\\status.txt"
 end
 
+local function inputsPath()
+  local home = os.getenv("USERPROFILE") or os.getenv("HOME") or "."
+  return home .. "\\Hades2Together\\inputs.txt"
+end
+
+local function readAll(path)
+  local file = io.open(path, "rb")
+  if not file then
+    return nil
+  end
+  local text = file:read("*a")
+  file:close()
+  return text
+end
+
 local function pump()
   if not console then
     return
@@ -36,8 +52,30 @@ local function pump()
       console.enterMap = nil
     end
   end
+  if console.play then
+    console.play = false
+    local text = readAll(inputsPath())
+    if not text then
+      Game.enterResult = "play missing inputs"
+    else
+      local script = Inputs.parse(text)
+      for slot = 2, 4 do
+        if not console.session.slots[slot] then
+          Console.execute(console, "player add " .. (script.names[slot] or ("P" .. slot)))
+        end
+      end
+      Game:BeginPlayback(script)
+    end
+  end
+  local now = os.clock()
+  local dt = 0
+  if Menu.lastClock then
+    dt = now - Menu.lastClock
+  end
+  Menu.lastClock = now
   Game:Install()
   Game:RefreshBodies()
+  Game:Step(dt)
   local report = io.open(statusPath, "ab")
   if report then
     report:write(Game:BodyReport() .. "\n")

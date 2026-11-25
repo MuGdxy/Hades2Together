@@ -81,7 +81,12 @@ function Console.execute(console, line)
   local session = console.session
 
   if head == "help" then
-    return "OK commands: help | status | players | player add [name] | player remove <slot|name> | enter [map]"
+    return "OK commands: help | status | players | player add [name] | player remove <slot|name> | enter [map] | play"
+  end
+
+  if head == "play" then
+    console.play = true
+    return "OK play"
   end
 
   if head == "enter" then

@@ -26,4 +26,6 @@
 
 `enter` 不经过存档栏，直接加载 `F_Test`。这间房不是正式开局房，游戏会跳过存档写入，不会覆盖现有存档。也可以写 `enter F_Combat01` 换一张图。
 
-进入世界前，最后一行是 `bodies hero=absent`。`enter` 被游戏执行后，额外席位应变成 `spawned=<id>`。窗口不在前台时命令会先排队。
+`play` 读取 `%USERPROFILE%\Hades2Together\inputs.txt`。文件不存在时，会先复制仓库里的 `control/inputs.txt`。格式是 `席位 moveX moveY 秒数`，可选 `name 席位 名字`。四个席位按这个序列走动：移动时播跑步动画，停下播待机，面朝移动方向。1 号是真正的英雄，2 到 4 号是同一套梅利诺埃模型。
+
+进入世界前，最后一行是 `bodies hero=absent`。`enter` 被游戏执行后，额外席位应变成 `spawned=<id>`，坐标会随 `play` 变化。窗口不在前台时命令会先排队。

@@ -38,6 +38,16 @@ function Get-ControlStatus {
 if ($Command -and $Command.Count -gt 0) {
     $head = $Command[0]
     $action = if ($Command.Count -ge 2) { $Command[1] } else { "" }
+    if ($head -eq "play") {
+        $sample = Join-Path (Split-Path $PSScriptRoot -Parent) "control\inputs.txt"
+        $dest = Join-Path $control "inputs.txt"
+        if (-not (Test-Path $dest) -and (Test-Path $sample)) {
+            Copy-Item $sample $dest
+        }
+        Add-ControlCommand "play"
+        Write-Output "queued play"
+        exit 0
+    }
     if ($head -eq "enter") {
         $map = "F_Test"
         if ($Command.Count -ge 2) { $map = $Command[1] }
@@ -68,7 +78,7 @@ if ($Command -and $Command.Count -gt 0) {
         Write-Output "queued $line"
         exit 0
     }
-    Write-Error "usage: h2t.ps1 [enter [map] | status | players | player add [name] | player remove <slot|name>]"
+    Write-Error "usage: h2t.ps1 [enter [map] | play | status | players | player add [name] | player remove <slot|name>]"
     exit 2
 }
 

@@ -1,0 +1,15 @@
+# slot moveX moveY seconds
+# Four characters walk away from the start, then change direction.
+name 1 Mel
+name 2 Dora
+name 3 Nem
+name 4 Ica
+
+1 1 0 2.5
+1 0 1 2.5
+2 -1 0 2.5
+2 0 1 2.5
+3 0 1 2.5
+3 1 0 2.5
+4 0 -1 2.5
+4 -1 0 2.5

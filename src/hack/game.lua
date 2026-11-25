@@ -2,6 +2,7 @@
 -- Slots 3 and 4 are not engine player slots. They are obstacles wearing Melinoe's mesh.
 
 local Engine = import("hack/engine.lua")
+local Inputs = import("dev/inputs.lua")
 
 local Game = {
   bodies = {},
@@ -9,17 +10,30 @@ local Game = {
   installed = false,
 }
 
+local SPEED = 540
 local OFFSETS = {
   [2] = { 180, 40 },
   [3] = { -180, 40 },
   [4] = { 0, 170 },
 }
 
-local COLORS = {
-  [2] = { 0.45, 0.75, 1.0, 1 },
-  [3] = { 0.45, 0.95, 0.55, 1 },
-  [4] = { 1.0, 0.55, 0.75, 1 },
-}
+function Game.location(id)
+  if type(GetLocation) ~= "function" then
+    return 0, 0
+  end
+  local point = GetLocation({ Id = id })
+  if type(point) ~= "table" then
+    return 0, 0
+  end
+  return point.X or point.x or 0, point.Y or point.y or 0
+end
+
+function Game.teleport(id, x, y)
+  if not id or type(Teleport) ~= "function" then
+    return
+  end
+  pcall(Teleport, { Id = id, OffsetX = x, OffsetY = y })
+end
 
 local function later(name)
   return function()
@@ -75,7 +89,6 @@ function Game:SpawnBody(playerId, spec)
   end
   local existing = self.bodies[playerId]
   if existing and existing.id then
-    self:PlaceBody(existing, heroId)
     return existing.id
   end
 
@@ -95,12 +108,11 @@ function Game:SpawnBody(playerId, spec)
   }
   self.bodies[playerId] = body
   pcall(SetThingProperty, { Property = "GrannyModel", Value = "Melinoe_Mesh", DestinationId = id })
+  pcall(SetThingProperty, { Property = "Graphic", Value = "MelinoeIdle", DestinationId = id })
+  pcall(SetThingProperty, { Property = "Material", Value = "Unlit", DestinationId = id })
   pcall(SetScale, { Id = id, Fraction = 0.7 })
   pcall(SetAnimation, { Name = "MelinoeIdle", DestinationId = id })
-  local color = COLORS[playerId]
-  if color then
-    pcall(SetColor, { Id = id, Color = color })
-  end
+  body.anim = "idle"
 
   local labelId = SpawnObstacle({
     Name = "BlankObstacle",
@@ -114,12 +126,19 @@ function Game:SpawnBody(playerId, spec)
       Text = spec.name or ("P" .. tostring(playerId)),
       OffsetY = -180,
       FontSize = 22,
-      Color = color or { 1, 1, 1, 1 },
+      Color = { 1, 1, 1, 1 },
       Font = "LatoMedium",
       Justification = "Center",
     })
   end
   self:PlaceBody(body, heroId)
+  local hx, hy = Game.location(heroId)
+  body.x = hx + body.offset[1]
+  body.y = hy + body.offset[2]
+  Game.teleport(id, body.x, body.y)
+  if body.labelId then
+    Game.teleport(body.labelId, body.x, body.y)
+  end
   print("[Hades2Together] spawned seat " .. tostring(playerId) .. " " .. tostring(spec.name))
   return id
 end
@@ -181,6 +200,81 @@ function Game:Enter(mapName)
   return true
 end
 
+function Game:BeginPlayback(script)
+  self.script = script
+  self.playing = true
+  self.playTime = 0
+  self.playOrigin = false
+end
+
+function Game:Drive(playerId, mx, my, dt, heroId)
+  local moving
+  local id
+  local body
+  if playerId == 1 then
+    id = heroId
+    body = self.bodies[1]
+    if not body then
+      local x, y = Game.location(heroId)
+      body = { id = heroId, x = x, y = y, real = true, anim = "idle" }
+      self.bodies[1] = body
+    end
+  else
+    local slot = self.session and self.session.slots[playerId]
+    local name = slot and slot.name or ("P" .. tostring(playerId))
+    id = self:BindHero(playerId, { name = name })
+    body = self.bodies[playerId]
+  end
+  if not body or not id then
+    return
+  end
+  if body.x == nil then
+    local hx, hy = Game.location(heroId)
+    local offset = OFFSETS[playerId] or { 0, 0 }
+    body.x = hx + offset[1]
+    body.y = hy + offset[2]
+  end
+  body.x, body.y, moving = Inputs.integrate(body.x, body.y, mx, my, dt, SPEED)
+  Game.teleport(id, body.x, body.y)
+  if body.labelId then
+    Game.teleport(body.labelId, body.x, body.y)
+  end
+  local anim = moving and "run" or "idle"
+  if body.anim ~= anim and type(SetAnimation) == "function" then
+    local clip = moving and "MelinoeRun" or "MelinoeIdle"
+    pcall(SetAnimation, { Name = clip, DestinationId = id })
+    body.anim = anim
+  end
+  if moving and type(SetAngle) == "function" then
+    local angle = math.atan2(my, mx) * 180 / math.pi
+    pcall(SetAngle, { Id = id, Angle = angle })
+    if type(SetGoalAngle) == "function" then
+      pcall(SetGoalAngle, { Id = id, Angle = angle, CompleteAngle = true })
+    end
+  end
+end
+
+function Game:Step(dt)
+  if not self.playing or not self.script then
+    return
+  end
+  local heroId = self:HeroId()
+  if not heroId then
+    return
+  end
+  if dt > 0.05 then
+    dt = 0.05
+  end
+  if dt < 0 then
+    dt = 0
+  end
+  self.playTime = (self.playTime or 0) + dt
+  for playerId = 1, 4 do
+    local mx, my = Inputs.stick(self.script, playerId, self.playTime)
+    self:Drive(playerId, mx, my, dt, heroId)
+  end
+end
+
 function Game:BodyReport()
   local heroId = self:HeroId()
   if not heroId then
@@ -196,7 +290,14 @@ function Game:BodyReport()
     if slot and slot.connected then
       local body = self.bodies[playerId]
       if body and body.id then
-        parts[#parts + 1] = playerId .. ":" .. tostring(slot.name) .. ":spawned=" .. tostring(body.id)
+        parts[#parts + 1] = string.format(
+          "%d:%s:spawned=%s:x=%d:y=%d",
+          playerId,
+          tostring(slot.name),
+          tostring(body.id),
+          math.floor(body.x or 0),
+          math.floor(body.y or 0)
+        )
       else
         parts[#parts + 1] = playerId .. ":" .. tostring(slot.name) .. ":waiting"
       end

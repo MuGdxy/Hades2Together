@@ -67,6 +67,7 @@ local Authority = import("authority/loop.lua")
 local Loopback = import("net/loopback.lua")
 local Transport = import("net/transport.lua")
 local Input = import("client/input.lua")
+local Inputs = import("dev/inputs.lua")
 local Console = import("dev/console.lua")
 local Bridge = import("dev/bridge.lua")
 
@@ -252,6 +253,29 @@ test("dev console adds and drops fake players", function()
   local status = Console.execute(console, "status")
   eq(status:find("role=serve+play", 1, true) ~= nil, true)
   eq(status:find("players=3", 1, true) ~= nil, true)
+end)
+
+test("input script walks four slots", function()
+  local script = Inputs.parse([[
+name 2 Dora
+2 1 0 1
+2 0 1 1
+]])
+  eq(script.names[2], "Dora")
+  local mx, my = Inputs.stick(script, 2, 0.5)
+  eq(mx, 1)
+  eq(my, 0)
+  mx, my = Inputs.stick(script, 2, 1.5)
+  eq(mx, 0)
+  eq(my, 1)
+  mx, my = Inputs.stick(script, 2, 3)
+  eq(mx, 0)
+  eq(my, 0)
+  local x, y, moving = Inputs.integrate(0, 0, 1, 0, 0.5, 540)
+  eq(x, 270)
+  eq(y, 0)
+  eq(moving, true)
+  eq(Console.execute(Console.new(Session.new("serve+play")), "play"), "OK play")
 end)
 
 test("queued commands add a fake player", function()
