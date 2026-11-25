@@ -1,6 +1,5 @@
 ---@meta _
--- The multiplayer button has to exist on the shell menu, which appears
--- before the game scripts load. This file therefore does not wait for ModUtil.
+-- Set up the mod before the game scripts load, without waiting for ModUtil.
 
 ---@diagnostic disable-next-line: undefined-global
 local mods = rom.mods
@@ -9,19 +8,16 @@ local mods = rom.mods
 mods['LuaENVY-ENVY'].auto()
 ---@diagnostic disable: lowercase-global
 
----@diagnostic disable-next-line: undefined-global
-rom = rom
----@diagnostic disable-next-line: undefined-global
-_PLUGIN = _PLUGIN
+-- The loader runs this file again in the same environment after clearing
+-- loader-owned callbacks. Keep the reload coordinator in ENVY's private table.
+if not reloadRuntime then
+  rom = rom
+  _PLUGIN = _PLUGIN
+  game = rom.game
+  import_as_fallback(game)
+  config = import("config.lua")
+  public.config = config
+  reloadRuntime = import("reload.lua")
+end
 
--- Game names such as CurrentRun and SpawnObstacle resolve through this fallback.
----@module 'game'
-game = rom.game
----@module 'game-import'
-import_as_fallback(game)
-
----@module 'config'
-config = import 'config.lua'
-public.config = config
-
-import 'ready.lua'
+reloadRuntime.load()

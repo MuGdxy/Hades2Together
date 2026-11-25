@@ -71,7 +71,7 @@ LoadMap({ Name = "F_Test" })
 - 不要在插件里调用 `os.execute`。插件会报 `os.execute() is not available`，`menu.lua` 会加载失败。
 - 不要把 HTTP 服务做进游戏进程。泵在渲染回调 `rom.gui.add_always_draw_imgui` 上，窗口失焦时模拟停止，连接会挂住。网页由 `tools/h2t.ps1` 单独听 `127.0.0.1:27779`。
 - 窗口不在前台时，`commands.txt` 不会被消费。`SetForegroundWindow` 不能可靠地让游戏恢复模拟。
-- 插件目录是联接：`Ship\ReturnOfModding\plugins\MuGdxy-Hades2Together` 指向仓库的 `src`。改完 Lua 必须重启 `Hades2.exe`。改 `on_import.pre` 时，钩子必须在游戏脚本加载前注册，所以一定要重启，不能等热加载。
+- 开发时 `Ship\ReturnOfModding\plugins\MuGdxy-Hades2Together` 可以联接到仓库的 `src`。运行模块可以按 [热更新说明](modules.md#开发时热更新-lua) 重新加载。需要在已导入的游戏脚本之前注册钩子时，必须重启 `Hades2.exe`。
 - 插件 Lua 兼容 5.2：不要位运算，不要 `//`，不要 `goto`。
 - 提交作者必须是 `MuGdxy <lxy819469559@gmail.com>`。不要改 git config，用每次提交的环境变量。推送需要 Clash：`git -c http.proxy=http://127.0.0.1:7890 push`。不要 force-push `main`，除非用户明确要求。
 

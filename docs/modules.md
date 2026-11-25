@@ -16,7 +16,21 @@
 | `src/dev/bridge.lua` | 权威 | 执行控制页排进来的命令，并写出席位。 |
 | `src/hack/menu.lua` | 游戏进程 | 在游戏渲染时读命令队列。 |
 | `tools/h2t.ps1` | 本机 | 提供 `http://127.0.0.1:27779/`。 |
-| `src/main.lua` `ready.lua` `config.lua` | 游戏进程 | Hell2Modding 入口和角色配置。 |
+| `src/main.lua` `reload.lua` `ready.lua` `config.lua` | 游戏进程 | Hell2Modding 入口、热更新、运行模块和角色配置。 |
+
+## 开发时热更新 Lua
+
+先用 Hell2Modding 1.0.125 和 LuaENVY 1.2.1 启动一次游戏。编辑安装中的 `ReturnOfModding/plugins/MuGdxy-Hades2Together` 下的运行模块并保存。如果这个目录联接到仓库的 `src`，可以直接改仓库文件。加载器监视启动时已存在的目录，收到 `.lua` 文件写入通知后会在下一次渲染时重新执行 `main.lua`。如果编辑器用临时文件替换源文件而没有触发通知，保存完所有改动后，在安装的插件目录执行以下命令，随后让游戏窗口处于前台。
+
+```powershell
+(Get-Item .\ready.lua).LastWriteTime = Get-Date
+```
+
+- 可以热更新 `ready.lua`、`hack/menu.lua`、`hack/game.lua`、`dev/` 和 `ready.lua` 加载的其他模块。保持会话、控制状态、游戏状态和已解析的播放脚本的数据格式兼容。已排队命令由下一次控制轮询处理。席位、身体 ID 和播放进度继续使用原值。已经执行的 `enter` 和 `play` 不会重放。仍在等待的 `enter` 按原逻辑等到游戏接口可用。
+- 运行模块有语法错误、顶层执行错误或缺少控制入口时，日志会写 `[Hades2Together] Lua load failed:`，旧版控制继续轮询。修正并保存后，看到 `[Hades2Together] Lua reloaded` 即可验证下一次轮询用了新代码。加载模块时应只定义代码和数据，游戏调用及控制操作留到回调执行时。
+- 改 `main.lua`、`reload.lua`、`config.lua`、`def.lua`、依赖或已存活状态的数据结构需要重启游戏。改动需要拦截已完成的游戏脚本导入时也要重启。热更新重新挂接后续导入的回调，游戏持有的 `OnAnyLoad` 回调继续调用当前模块的方法。直接编辑 `main.lua` 时，加载器会先清除旧回调，入口本身的语法错误需要先修正才能恢复轮询。
+
+1.0.125 的 DLL SHA-256 与发布构建一致。该构建启用了插件目录监听，在渲染前清除插件的 GUI 和导入回调，并在原环境中重新执行入口。LuaENVY 1.2.1 的 `import(path, env)` 用 `loadfile` 读磁盘并支持指定模块环境。 [Hell2Modding 构建](https://github.com/SGG-Modding/Hell2Modding/actions/runs/45138009861) · [监听与回调清理](https://github.com/xiaoxiao921/ReturnOfModdingBase/blob/693360501a0b5309e302956fca1c5aaf528da441/src/lua/lua_manager.cpp#L165-L256) · [LuaENVY 1.2.1](https://thunderstore.io/c/hades-ii/p/LuaENVY/ENVY/v/1.2.1/)
 
 ## hack 接口
 

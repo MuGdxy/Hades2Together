@@ -62,7 +62,7 @@ local Messages = import("protocol/messages.lua")
 local Codec = import("protocol/codec.lua")
 local Engine = import("hack/engine.lua")
 local Fake = import("hack/fake.lua")
-local Game = import("hack/game.lua")
+local Game = import("hack/game.lua").new()
 local Authority = import("authority/loop.lua")
 local Loopback = import("net/loopback.lua")
 local Transport = import("net/transport.lua")
@@ -286,6 +286,8 @@ test("queued commands add a fake player", function()
   eq(results[1], "OK joined 2 Second Mel")
   eq(Bridge.statusText(console):find("2:Second Mel:up", 1, true) ~= nil, true)
 end)
+
+assert(loadfile(root .. "/tests/reload.lua"))()(root, test, eq)
 
 test("rules modules do not touch the game", function()
   local allowed = {
