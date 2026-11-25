@@ -3,6 +3,7 @@
 
 local Bridge = import("dev/bridge.lua")
 local Console = import("dev/console.lua")
+local Game = import("hack/game.lua")
 
 local Menu = {}
 
@@ -30,11 +31,20 @@ local function pump()
     return
   end
   Bridge.sync(console, commandsPath, statusPath)
+  Game:Install()
+  Game:RefreshBodies()
+  local report = io.open(statusPath, "ab")
+  if report then
+    report:write(Game:BodyReport() .. "\n")
+    report:close()
+  end
 end
 
 function Menu.install(session)
   console = Console.new(session)
   commandsPath, statusPath = controlPaths()
+  Game:SetSession(session)
+  Game:Install()
   print("[Hades2Together] status " .. statusPath)
   pump()
 

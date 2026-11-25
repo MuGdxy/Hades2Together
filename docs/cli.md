@@ -19,6 +19,8 @@
 .\tools\h2t.ps1 status
 ```
 
+`h2t.ps1 status` 最后一行是角色有没有进到世界里。`hero=absent` 表示还在主菜单，游戏里还没有英雄。`2:Fake1:spawned=<id>` 表示这个席位已经在英雄旁边生成了一个身体。
+
 `player add` 不写名字时，名字从 `Fake1` 开始递增。本地玩家启动时占 1 号席，名字来自 `playerName`。
 
 这些操作只改席位。把假玩家变成世界里的单位是里程碑 2 的 `BindHero`。

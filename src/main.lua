@@ -14,6 +14,12 @@ rom = rom
 ---@diagnostic disable-next-line: undefined-global
 _PLUGIN = _PLUGIN
 
+-- Game names such as CurrentRun and SpawnObstacle resolve through this fallback.
+---@module 'game'
+game = rom.game
+---@module 'game-import'
+import_as_fallback(game)
+
 ---@module 'config'
 config = import 'config.lua'
 public.config = config
