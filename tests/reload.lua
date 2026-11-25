@@ -6,7 +6,7 @@ local function readSource(root, name)
 end
 
 local function mockLoader(root)
-  local mock = { edits = {}, frames = {}, imports = {}, maps = {}, errors = {},
+  local mock = { edits = {}, frames = {}, imports = {}, maps = {}, warnings = {},
     info = {}, polls = 0, clock = 0, spawned = 0, entered = {}, positions = {},
     locations = {}, threads = {}, allowSave = false }
   local controlPath = "mock-home\\Hades2Together\\"
@@ -71,7 +71,8 @@ local function mockLoader(root)
     end } },
     log = {
       info = function(line) mock.info[#mock.info + 1] = line end,
-      error = function(line) mock.errors[#mock.errors + 1] = line end,
+      warning = function(line) mock.warnings[#mock.warnings + 1] = line end,
+      error = error,
     },
   }
   public.io = { open = function(path, mode)
@@ -93,6 +94,9 @@ local function mockLoader(root)
     rename = function(from, to)
       assert(from == commandsPath)
       mock.polls = mock.polls + 1
+      if mock.pollError then
+        error(mock.pollError, 0)
+      end
       if files[from] == nil or files[to] ~= nil then
         return nil
       end
@@ -194,7 +198,7 @@ return function(root, test, eq)
     onMap({ name = "NewRoom" })
     local changedMap = mod:poll(0.125)
     assert(changedMap:find("map=NewRoom-updated", 1, true), changedMap)
-    eq(#mod.errors, 0)
+    eq(#mod.warnings, 0)
   end)
 
   test("a bad edit keeps the last good control pump and a corrected edit replaces it", function()
@@ -210,8 +214,8 @@ return function(root, test, eq)
     mod.edits["dev/console.lua"] = "local broken ="
     mod:queue("player add\n")
     mod:reload()
-    eq(#mod.errors, 1)
-    assert(mod.errors[1]:find("dev/console.lua", 1, true), mod.errors[1])
+    eq(#mod.warnings, 1)
+    assert(mod.warnings[1]:find("dev/console.lua", 1, true), mod.warnings[1])
     eq(#mod.frames, 1)
     eq(#mod.imports, 0)
     local lastGood = mod:poll(0.03125)
@@ -220,15 +224,15 @@ return function(root, test, eq)
 
     mod.edits["dev/console.lua"] = '_G.LoadMap = function() end; error("broken module")'
     mod:reload()
-    eq(#mod.errors, 2)
-    assert(mod.errors[2]:find("broken module", 1, true), mod.errors[2])
+    eq(#mod.warnings, 2)
+    assert(mod.warnings[2]:find("broken module", 1, true), mod.warnings[2])
     local stillWaiting = mod:poll(0.0625)
     assert(stillWaiting:find("enter=waiting", 1, true), stillWaiting)
 
     mod.edits["dev/console.lua"] = "return {}"
     mod:reload()
-    eq(#mod.errors, 3)
-    assert(mod.errors[3]:find("dev/console.lua is missing", 1, true), mod.errors[3])
+    eq(#mod.warnings, 3)
+    assert(mod.warnings[3]:find("dev/console.lua is missing", 1, true), mod.warnings[3])
 
     mod.edits["dev/console.lua"] = readSource(root, "dev/console.lua"):gsub('"Fake"', '"Dev"')
     mod.game.LoadMap = loadMap
@@ -244,7 +248,22 @@ return function(root, test, eq)
     eq(#mod.entered, 1)
     mod:poll(0.125)
     eq(#mod.entered, 1)
-    eq(#mod.errors, 3)
+    eq(#mod.warnings, 3)
+  end)
+
+  test("a control poll failure warns once and later polls recover", function()
+    local mod = mockLoader(root)
+    mod:reload()
+    mod:queue("player add\n")
+    mod.pollError = "queue unavailable"
+    mod:poll(0)
+    mod:poll(1)
+    eq(#mod.warnings, 1)
+    assert(mod.warnings[1]:find("control sync failed: queue unavailable", 1, true), mod.warnings[1])
+    mod.pollError = nil
+    local recovered = mod:poll(2)
+    assert(recovered:find("OK joined 2 Fake1", 1, true), recovered)
+    eq(#mod.warnings, 1)
   end)
 
   test("enter schedules a yielding load once and waits for a real hero", function()

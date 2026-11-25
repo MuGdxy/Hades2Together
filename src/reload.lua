@@ -49,7 +49,7 @@ local function frame()
   local ok, err = pcall(active.Menu.pump, control, gameState)
   if not ok and not frameError then
     frameError = true
-    rom.log.error("[Hades2Together] control sync failed: " .. tostring(err))
+    rom.log.warning("[Hades2Together] control sync failed: " .. tostring(err))
   end
 end
 
@@ -78,7 +78,7 @@ function Reload.load()
     active = candidate
     frameError = nil
   else
-    rom.log.error("[Hades2Together] Lua load failed: " .. tostring(candidate))
+    rom.log.warning("[Hades2Together] Lua load failed: " .. tostring(candidate))
   end
 
   if active then
