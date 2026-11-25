@@ -1,0 +1,4 @@
+build/
+packages/
+*.cfg
+tcli.exe
