@@ -212,6 +212,9 @@ consumable.IgnorePurchase = true
 consumable.PurchaseRequirements = {}
 assert(capture:ReadActors().room.rewards == nil)
 consumable.PurchaseRequirements = nil
+game.LootObjects[offer.ObjectId] = consumable
+assert(capture:ReadActors().room.rewards == nil) -- ambiguous registration
+game.LootObjects[offer.ObjectId] = nil
 local observedConsumable = assert(capture:ReadActors().room.rewards[1])
 assert(observedConsumable.id == 3 and observedConsumable.encounterId == spawned.encounterId)
 assert(observedConsumable.kind == "MaxHealthDrop" and observedConsumable.objectId == offer.ObjectId)
