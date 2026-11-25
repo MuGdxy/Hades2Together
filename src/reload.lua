@@ -25,10 +25,10 @@ local function candidateRuntime()
 
   local candidate = env.import("ready.lua")
   local required = {
-    ["hack/menu.lua"] = { "new", "pump" },
-    ["hack/game.lua"] = { "new", "OnImport", "Install", "OnMap",
+    ["hack/menu.lua"] = { "new", "pump", "publish" },
+    ["hack/game.lua"] = { "new", "Install", "OnMap", "CheckEnter",
       "Enter", "BeginPlayback", "RefreshBodies", "Step", "BodyReport" },
-    ["dev/bridge.lua"] = { "sync" },
+    ["dev/bridge.lua"] = { "sync", "statusText" },
     ["dev/console.lua"] = { "new", "execute" },
     ["dev/inputs.lua"] = { "parse", "stick", "integrate" },
     ["protocol/session.lua"] = { "new", "join", "count", "drop" },
@@ -51,10 +51,6 @@ local function frame()
     frameError = true
     rom.log.error("[Hades2Together] control sync failed: " .. tostring(err))
   end
-end
-
-local function onImport(...)
-  gameState:OnImport(...)
 end
 
 local function prepare()
@@ -88,10 +84,10 @@ function Reload.load()
   if active then
     -- The loader cleared these even when the candidate could not load.
     rom.gui.add_always_draw_imgui(frame)
-    rom.on_import.pre(onImport)
   end
   if newGame then
     gameState:Install()
+    active.Menu.publish(control, gameState, "waiting for first game update")
     print("[Hades2Together] status " .. control.statusPath)
     rom.log.info(string.format(
       "[Hades2Together] control queue ready, role=%s slot=%s page=http://127.0.0.1:%s/",

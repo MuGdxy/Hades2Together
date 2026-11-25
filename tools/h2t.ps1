@@ -29,10 +29,19 @@ function Add-ControlCommand([string]$Line) {
 }
 
 function Get-ControlStatus {
-    if (-not (Test-Path $statusPath)) {
-        return "游戏还没有写出席位。把哈迪斯 2 的窗口切到前台后，这里会更新。"
+    $snapshot = ""
+    try {
+        $snapshot = [IO.File]::ReadAllText($statusPath).TrimEnd()
+    } catch [IO.IOException] {
+        # The game may be publishing a status update.
     }
-    return [IO.File]::ReadAllText($statusPath).TrimEnd()
+    if (-not $snapshot) {
+        $snapshot = "control=waiting for game status"
+    }
+    if (Test-Path -LiteralPath $commandsPath) {
+        return "queue=waiting for game update`n$snapshot"
+    }
+    return $snapshot
 }
 
 if ($Command -and $Command.Count -gt 0) {
@@ -49,6 +58,10 @@ if ($Command -and $Command.Count -gt 0) {
         exit 0
     }
     if ($head -eq "enter") {
+        if ($Command.Count -gt 2 -or ($Command.Count -eq 2 -and $Command[1] -cnotmatch '^[A-Za-z0-9_]+\z')) {
+            Write-Error "usage: h2t.ps1 enter [F_Test | F_Combat01]"
+            exit 2
+        }
         $map = "F_Test"
         if ($Command.Count -ge 2) { $map = $Command[1] }
         Add-ControlCommand "enter $map"
@@ -100,7 +113,7 @@ $page = @'
 </head>
 <body>
 <h1>多人游戏</h1>
-<p>命令会先排队。哈迪斯 2 的窗口在前台时才会执行，并把席位写回来。</p>
+<p>命令会先排队，游戏开始更新后会执行并写回席位。</p>
 <pre id="status">读取中…</pre>
 <button id="add" type="button">加入假玩家</button>
 <input id="name" placeholder="名字">

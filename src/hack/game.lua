@@ -16,18 +16,16 @@ function Game.new(session)
 end
 
 local SPEED = 540
+local TEST_MAPS = { F_Test = true, F_Combat01 = true }
+local ENTER_TIMEOUT = 20
 local OFFSETS = {
   [2] = { 180, 40 },
   [3] = { -180, 40 },
   [4] = { 0, 170 },
 }
 
-local function gameCall(self, name, args)
-  local env = self.gameEnv
-  local fn = env and env[name] or nil
-  if type(fn) ~= "function" then
-    fn = _G[name]
-  end
+local function gameCall(name, args)
+  local fn = rom and rom.game[name]
   if type(fn) ~= "function" then
     return nil
   end
@@ -35,22 +33,20 @@ local function gameCall(self, name, args)
 end
 
 function Game:location(id)
-  local fn = self.gameEnv and self.gameEnv.GetLocation or GetLocation
-  if type(fn) ~= "function" then
-    return 0, 0
+  local ok, point = gameCall("GetLocation", { Id = id })
+  if ok and type(point) == "table" then
+    local x, y = point.X or point.x, point.Y or point.y
+    if type(x) == "number" and type(y) == "number" then
+      return x, y
+    end
   end
-  local ok, point = pcall(fn, { Id = id })
-  if not ok or type(point) ~= "table" then
-    return 0, 0
-  end
-  return point.X or point.x or 0, point.Y or point.y or 0
 end
 
 function Game:teleport(id, x, y)
   if not id then
     return
   end
-  gameCall(self, "Teleport", { Id = id, OffsetX = x, OffsetY = y })
+  gameCall("Teleport", { Id = id, OffsetX = x, OffsetY = y })
 end
 
 local function later(name)
@@ -60,8 +56,7 @@ local function later(name)
 end
 
 function Game:HeroId()
-  local env = self.gameEnv
-  local run = env and env.CurrentRun or CurrentRun
+  local run = rom and rom.game.CurrentRun
   if type(run) ~= "table" or type(run.Hero) ~= "table" then
     return nil
   end
@@ -79,14 +74,14 @@ end
 
 function Game:PlaceBody(body, heroId)
   local offset = body.offset or { 0, 0 }
-  gameCall(self, "Teleport", {
+  gameCall("Teleport", {
     Id = body.id,
     DestinationId = heroId,
     OffsetX = offset[1],
     OffsetY = offset[2],
   })
   if body.labelId then
-    gameCall(self, "Teleport", {
+    gameCall("Teleport", {
       Id = body.labelId,
       DestinationId = heroId,
       OffsetX = offset[1],
@@ -96,7 +91,7 @@ function Game:PlaceBody(body, heroId)
 end
 
 function Game:SpawnBody(playerId, spec)
-  local spawn = self.gameEnv and self.gameEnv.SpawnObstacle or SpawnObstacle
+  local spawn = rom and rom.game.SpawnObstacle
   if type(spawn) ~= "function" then
     return nil
   end
@@ -124,11 +119,11 @@ function Game:SpawnBody(playerId, spec)
     offset = OFFSETS[playerId] or { 180, 0 },
   }
   self.bodies[playerId] = body
-  gameCall(self, "SetThingProperty", { Property = "GrannyModel", Value = "Melinoe_Mesh", DestinationId = id })
-  gameCall(self, "SetThingProperty", { Property = "Graphic", Value = "MelinoeIdle", DestinationId = id })
-  gameCall(self, "SetThingProperty", { Property = "Material", Value = "Unlit", DestinationId = id })
-  gameCall(self, "SetScale", { Id = id, Fraction = 0.7 })
-  gameCall(self, "SetAnimation", { Name = "MelinoeIdle", DestinationId = id })
+  gameCall("SetThingProperty", { Property = "GrannyModel", Value = "Melinoe_Mesh", DestinationId = id })
+  gameCall("SetThingProperty", { Property = "Graphic", Value = "MelinoeIdle", DestinationId = id })
+  gameCall("SetThingProperty", { Property = "Material", Value = "Unlit", DestinationId = id })
+  gameCall("SetScale", { Id = id, Fraction = 0.7 })
+  gameCall("SetAnimation", { Name = "MelinoeIdle", DestinationId = id })
   body.anim = "idle"
 
   local labelId = spawn({
@@ -138,7 +133,7 @@ function Game:SpawnBody(playerId, spec)
   })
   body.labelId = labelId
   if labelId then
-    gameCall(self, "CreateTextBox", {
+    gameCall("CreateTextBox", {
       Id = labelId,
       Text = spec.name or ("P" .. tostring(playerId)),
       OffsetY = -180,
@@ -149,13 +144,6 @@ function Game:SpawnBody(playerId, spec)
     })
   end
   self:PlaceBody(body, heroId)
-  local hx, hy = self:location(heroId)
-  body.x = hx + body.offset[1]
-  body.y = hy + body.offset[2]
-  self:teleport(id, body.x, body.y)
-  if body.labelId then
-    self:teleport(body.labelId, body.x, body.y)
-  end
   print("[Hades2Together] spawned seat " .. tostring(playerId) .. " " .. tostring(spec.name))
   return id
 end
@@ -166,60 +154,88 @@ function Game:DropBody(playerId)
   if not body then
     return
   end
-  if type(Destroy) == "function" or (self.gameEnv and type(self.gameEnv.Destroy) == "function") then
-    gameCall(self, "Destroy", { Id = body.id })
-    if body.labelId then
-      gameCall(self, "Destroy", { Id = body.labelId })
-    end
+  gameCall("Destroy", { Id = body.id })
+  if body.labelId then
+    gameCall("Destroy", { Id = body.labelId })
   end
   self.bodies[playerId] = nil
 end
 
-function Game:OnImport(a, b)
-  if not self.loggedHook then
-    self.loggedHook = true
-    local g = rawget(_G, "LoadMap")
-    print("[Hades2Together] import pre args " .. type(a) .. " " .. type(b)
-      .. " _G.LoadMap=" .. type(_G.LoadMap)
-      .. " raw=" .. type(g))
+function Game:FinishEnter(result)
+  self.enterRequest = nil
+  self.enterResult = result
+end
+
+function Game:CheckEnter(now)
+  local request = self.enterRequest
+  if not request then
+    return
   end
-  local env = type(a) == "table" and a or (type(b) == "table" and b or nil)
-  if type(env) == "table" then
-    self.gameEnv = env
-  elseif type(_G.LoadMap) == "function" then
-    self.gameEnv = _G
+  if request.error then
+    self:FinishEnter("failed " .. request.error .. "; restart the game if the room did not finish loading")
+  elseif request.done and self:IsRoomReady(request.map) then
+    self:FinishEnter("ready " .. request.map)
+  elseif now >= request.deadline and not request.timedOut then
+    -- The engine may still own a suspended LoadMap coroutine.
+    request.timedOut = true
+    self.enterResult = "failed " .. request.map .. " did not finish loading; restart with /AllowSaveLoad=false"
   end
 end
 
-local function resolveLoadMap(self)
-  local env = self.gameEnv
-  if type(env) == "table" and type(env.LoadMap) == "function" then
-    return env.LoadMap
-  end
-  if type(LoadMap) == "function" then
-    return LoadMap
-  end
+function Game:IsRoomReady(mapName)
+  local run = rom.game.CurrentRun
+  local hero = self:HeroId()
+  return run and run.CurrentRoom and run.CurrentRoom.Name == mapName
+    and hero and self:location(hero) ~= nil
 end
 
-function Game:Enter(mapName)
-  local loadMap = resolveLoadMap(self)
-  if not loadMap then
-    if not self.loggedLoadMap then
-      self.loggedLoadMap = true
-      print("[Hades2Together] LoadMap missing, gameEnv=" .. type(self.gameEnv))
-    end
-    self.enterResult = "waiting"
+function Game:Enter(mapName, now)
+  if not TEST_MAPS[mapName] then
+    self.enterResult = "failed unsupported map " .. tostring(mapName) .. "; use enter F_Test or enter F_Combat01"
+    return true
+  end
+  if self.enterRequest then
+    return true
+  end
+  local g = rom.game
+  if type(g.LoadMap) ~= "function" or type(g.thread) ~= "function"
+      or type(g.StartNewGame) ~= "function" or type(g.RoomData) ~= "table" then
+    self.enterResult = "waiting for game scripts"
     return false
   end
-  local ok, err = pcall(function()
-    loadMap({ Name = mapName })
-  end)
-  if ok then
-    self.enterResult = "requested " .. mapName
-    print("[Hades2Together] enter " .. mapName)
+  local room = g.RoomData[mapName]
+  local saveOptionRead, allowSave = gameCall("GetConfigOptionValue", { Name = "AllowSaveLoad" })
+  local mapPath = rom.paths.Content() .. "/Maps/" .. mapName .. ".map_text"
+  local mapFile = io.open(mapPath, "rb")
+  if mapFile then
+    mapFile:close()
+  end
+  if not room or room.GameStart or not mapFile then
+    self.enterResult = "failed " .. mapName .. " is unavailable for direct load; use packaged F_Combat01"
+  elseif not saveOptionRead or allowSave ~= false then
+    self.enterResult = "failed restart with /AllowSaveLoad=false"
+  elseif self:IsRoomReady(mapName) then
+    self.enterResult = "ready " .. mapName
+  elseif g.GameState ~= nil or g.CurrentRun ~= nil then
+    self.enterResult = "failed a run is already active; restart with /AllowSaveLoad=false"
   else
-    self.enterResult = "failed " .. tostring(err)
-    print("[Hades2Together] enter failed: " .. tostring(err))
+    local request = { map = mapName, deadline = now + ENTER_TIMEOUT }
+    self.enterRequest = request
+    self.enterResult = "loading " .. mapName
+    local ok, err = pcall(g.thread, function()
+      -- RoomLogic's direct-load path creates a fresh run during PreThingCreation.
+      -- LoadMap yields twice, so use the game's coroutine scheduler.
+      local loaded, loadError = pcall(g.LoadMap, { Name = mapName })
+      if not loaded then
+        request.error = tostring(loadError)
+        gameCall("RemoveInputBlock", { Name = "LoadMap" })
+      end
+      request.done = loaded
+    end)
+    if not ok then
+      request.error = tostring(err)
+    end
+    self:CheckEnter(now)
   end
   return true
 end
@@ -228,7 +244,10 @@ function Game:BeginPlayback(script)
   self.script = script
   self.playing = true
   self.playTime = 0
-  self.playOrigin = false
+  self.playResult = nil
+  for _, body in pairs(self.bodies) do
+    body.x, body.y = nil, nil
+  end
 end
 
 function Game:Drive(playerId, mx, my, dt, heroId)
@@ -239,8 +258,7 @@ function Game:Drive(playerId, mx, my, dt, heroId)
     id = heroId
     body = self.bodies[1]
     if not body then
-      local x, y = self:location(heroId)
-      body = { id = heroId, x = x, y = y, real = true, anim = "idle" }
+      body = { id = heroId, anim = "idle" }
       self.bodies[1] = body
     end
   else
@@ -253,10 +271,10 @@ function Game:Drive(playerId, mx, my, dt, heroId)
     return
   end
   if body.x == nil then
-    local hx, hy = self:location(heroId)
-    local offset = OFFSETS[playerId] or { 0, 0 }
-    body.x = hx + offset[1]
-    body.y = hy + offset[2]
+    body.x, body.y = self:location(id)
+    if body.x == nil then
+      return
+    end
   end
   body.x, body.y, moving = Inputs.integrate(body.x, body.y, mx, my, dt, SPEED)
   self:teleport(id, body.x, body.y)
@@ -266,13 +284,13 @@ function Game:Drive(playerId, mx, my, dt, heroId)
   local anim = moving and "run" or "idle"
   if body.anim ~= anim then
     local clip = moving and "MelinoeRun" or "MelinoeIdle"
-    gameCall(self, "SetAnimation", { Name = clip, DestinationId = id })
+    gameCall("SetAnimation", { Name = clip, DestinationId = id })
     body.anim = anim
   end
   if moving then
     local angle = math.atan2(my, mx) * 180 / math.pi
-    gameCall(self, "SetAngle", { Id = id, Angle = angle })
-    gameCall(self, "SetGoalAngle", { Id = id, Angle = angle, CompleteAngle = true })
+    gameCall("SetAngle", { Id = id, Angle = angle })
+    gameCall("SetGoalAngle", { Id = id, Angle = angle, CompleteAngle = true })
   end
 end
 
@@ -282,6 +300,7 @@ function Game:Step(dt)
   end
   local heroId = self:HeroId()
   if not heroId then
+    self.playResult = "waiting for hero; run enter"
     return
   end
   if dt > 0.05 then
@@ -291,35 +310,47 @@ function Game:Step(dt)
     dt = 0
   end
   self.playTime = (self.playTime or 0) + dt
+  local active = false
   for playerId = 1, 4 do
-    local mx, my = Inputs.stick(self.script, playerId, self.playTime)
-    self:Drive(playerId, mx, my, dt, heroId)
+    local slot = self.session.slots[playerId]
+    if slot and slot.connected then
+      local mx, my, hasStep = Inputs.stick(self.script, playerId, self.playTime)
+      active = active or hasStep
+      self:Drive(playerId, mx, my, dt, heroId)
+    end
   end
+  self.playing = active == true
+  self.playResult = self.playing and "running" or "finished"
+end
+
+local function positionText(self, id)
+  local x, y = self:location(id)
+  if x == nil then
+    return ":location=unavailable"
+  end
+  return string.format(":x=%d:y=%d", math.floor(x), math.floor(y))
 end
 
 function Game:BodyReport()
   local heroId = self:HeroId()
-  if not heroId then
-    local line = "bodies hero=absent"
-    if self.enterResult then
-      line = line .. " enter=" .. self.enterResult
-    end
-    return line
+  local parts = { "bodies hero=" .. (heroId and tostring(heroId) .. positionText(self, heroId) or "absent") }
+  if self.enterResult then
+    parts[#parts + 1] = "enter=" .. self.enterResult:gsub("[\r\n]+", " ")
   end
-  local parts = { "bodies hero=" .. tostring(heroId) }
+  if self.playResult then
+    parts[#parts + 1] = "play=" .. self.playResult
+  end
+  local run = rom.game.CurrentRun
+  if run and run.CurrentRoom and run.CurrentRoom.Name then
+    parts[#parts + 1] = "map=" .. run.CurrentRoom.Name
+  end
   for playerId = 2, 4 do
     local slot = self.session and self.session.slots[playerId]
     if slot and slot.connected then
       local body = self.bodies[playerId]
       if body and body.id then
-        parts[#parts + 1] = string.format(
-          "%d:%s:spawned=%s:x=%d:y=%d",
-          playerId,
-          tostring(slot.name),
-          tostring(body.id),
-          math.floor(body.x or 0),
-          math.floor(body.y or 0)
-        )
+        parts[#parts + 1] = string.format("%d:%s:spawned=%s", playerId, slot.name, body.id)
+          .. positionText(self, body.id)
       else
         parts[#parts + 1] = playerId .. ":" .. tostring(slot.name) .. ":waiting"
       end
@@ -343,18 +374,15 @@ function Game:RefreshBodies()
 end
 
 function Game:OnMap(name)
-  if name ~= self.map then
-    self.map = name
-    self.bodies = {}
-  end
-  self:RefreshBodies()
+  self.map = name
+  self.bodies = {}
 end
 
 function Game:Install()
   if self.installed then
     return
   end
-  local onAnyLoad = self.gameEnv and self.gameEnv.OnAnyLoad or OnAnyLoad
+  local onAnyLoad = rom.game.OnAnyLoad
   if type(onAnyLoad) ~= "function" then
     return
   end

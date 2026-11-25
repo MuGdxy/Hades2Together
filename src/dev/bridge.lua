@@ -1,6 +1,4 @@
--- Applies queued dev commands and writes the roster the control page reads.
--- The page itself is served outside the game, so it still opens when the
--- game window is in the background and the simulation is paused.
+-- Applies queued dev commands and formats the roster for the local controls.
 
 local Console = import("dev/console.lua")
 
@@ -20,7 +18,7 @@ function Bridge.statusText(console)
   return Console.execute(console, "status") .. "\n" .. Console.execute(console, "players") .. "\n"
 end
 
-function Bridge.sync(console, commandsPath, statusPath)
+function Bridge.sync(console, commandsPath)
   local lines = {}
   local taken = commandsPath .. ".take"
   if os.rename(commandsPath, taken) then
@@ -36,16 +34,7 @@ function Bridge.sync(console, commandsPath, statusPath)
       end
     end
   end
-  local results = Bridge.applyLines(console, lines)
-  local out = io.open(statusPath, "wb")
-  if out then
-    out:write(Bridge.statusText(console))
-    if #results > 0 then
-      out:write(table.concat(results, "\n") .. "\n")
-    end
-    out:close()
-  end
-  return results
+  return Bridge.applyLines(console, lines)
 end
 
 return Bridge

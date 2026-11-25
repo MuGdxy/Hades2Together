@@ -48,7 +48,7 @@ function Inputs.stick(script, slot, time)
   for index = 1, #list do
     local step = list[index]
     if time < cursor + step.dur then
-      return step.mx, step.my
+      return step.mx, step.my, true
     end
     cursor = cursor + step.dur
   end

@@ -1,14 +1,15 @@
 # 开发路径
 
-当前卡在命令行进不了场景。现象、已经排除的原因和下一步见 [blockers.md](blockers.md)。
+开发优先使用 CLI、Lua 热更新和游戏外的控制页。通过游戏内开发 GUI 的源码查找游戏 API，需要操作时在 CLI 提供入口。当前从 PowerShell 冷启动 `F_Combat01` 后可以控制四个角色，标题画面的命令派发仍待解决。见 [当前卡点](blockers.md)。
 
 离线测试在仓库根目录执行 `lua tests/run.lua`。这一套测试必须在每个阶段结束后仍然通过。
 
-GUI 测试等 CLI 全部通过后再做。CLI 通过指这三件事：
+本机 CLI 的验证项包括：
 
 - `lua tests/run.lua` 通过。
 - `.\tools\h2t.ps1 player add`、`player remove`、`status` 能排队并读回席位。
-- `.\tools\h2t.ps1 enter` 在游戏窗口处于前台时进入 `F_Test`，随后 `status` 最后一行出现 `spawned=`。在这之前不点游戏画面。
+- 游戏测试房间识别英雄，`play` 后 `status` 显示四个独立对象 ID 和随播放变化的引擎坐标。
+- 标题画面接收并处理新的 `enter` 命令。这一项仍需游戏侧派发入口和可用的默认地图资产。
 
 ## 阶段 0：边界
 

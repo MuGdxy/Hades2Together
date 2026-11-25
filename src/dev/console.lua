@@ -91,8 +91,8 @@ function Console.execute(console, line)
 
   if head == "enter" then
     local mapName = words[2] or "F_Test"
-    if not mapName:match("^[%w_]+$") then
-      return "ERR bad map"
+    if #words > 2 or not mapName:match("^[%w_]+$") then
+      return "ERR bad map; use enter F_Test"
     end
     console.enterMap = mapName
     return "OK enter " .. mapName

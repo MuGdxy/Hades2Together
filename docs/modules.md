@@ -26,9 +26,9 @@
 (Get-Item .\ready.lua).LastWriteTime = Get-Date
 ```
 
-- 可以热更新 `ready.lua`、`hack/menu.lua`、`hack/game.lua`、`dev/` 和 `ready.lua` 加载的其他模块。保持会话、控制状态、游戏状态和已解析的播放脚本的数据格式兼容。已排队命令由下一次控制轮询处理。席位、身体 ID 和播放进度继续使用原值。已经执行的 `enter` 和 `play` 不会重放。仍在等待的 `enter` 按原逻辑等到游戏接口可用。
+- 可以热更新 `ready.lua`、`hack/menu.lua`、`hack/game.lua`、`dev/` 和 `ready.lua` 加载的其他模块。保持会话、控制状态、游戏状态和已解析的播放脚本的数据格式兼容。已排队命令由下一次控制轮询处理。席位、身体 ID 和播放进度继续使用原值。已经调度的 `enter` 和 `play` 保留当前进度。
 - 运行模块有语法错误、顶层执行错误或缺少控制入口时，日志会写 `[Hades2Together] Lua load failed:`，旧版控制继续轮询。修正并保存后，看到 `[Hades2Together] Lua reloaded` 即可验证下一次轮询用了新代码。加载模块时应只定义代码和数据，游戏调用及控制操作留到回调执行时。
-- 改 `main.lua`、`reload.lua`、`config.lua`、`def.lua`、依赖或已存活状态的数据结构需要重启游戏。改动需要拦截已完成的游戏脚本导入时也要重启。热更新重新挂接后续导入的回调，游戏持有的 `OnAnyLoad` 回调继续调用当前模块的方法。直接编辑 `main.lua` 时，加载器会先清除旧回调，入口本身的语法错误需要先修正才能恢复轮询。
+- 改 `main.lua`、`reload.lua`、`config.lua`、`def.lua`、依赖或已存活状态的数据结构需要重启游戏。热更新重新挂接控制轮询，游戏持有的 `OnAnyLoad` 回调继续调用当前模块的方法。直接编辑 `main.lua` 时，加载器会先清除旧回调，入口本身的语法错误需要先修正才能恢复轮询。
 
 1.0.125 的 DLL SHA-256 与发布构建一致。该构建启用了插件目录监听，在渲染前清除插件的 GUI 和导入回调，并在原环境中重新执行入口。LuaENVY 1.2.1 的 `import(path, env)` 用 `loadfile` 读磁盘并支持指定模块环境。 [Hell2Modding 构建](https://github.com/SGG-Modding/Hell2Modding/actions/runs/45138009861) · [监听与回调清理](https://github.com/xiaoxiao921/ReturnOfModdingBase/blob/693360501a0b5309e302956fca1c5aaf528da441/src/lua/lua_manager.cpp#L165-L256) · [LuaENVY 1.2.1](https://thunderstore.io/c/hades-ii/p/LuaENVY/ENVY/v/1.2.1/)
 

@@ -1,5 +1,4 @@
--- Watches the control queue. The webpage is a separate local server, because
--- this process stops rendering when its window is in the background.
+-- Polls the queue on game updates. The control page runs in its own process.
 
 local Bridge = import("dev/bridge.lua")
 local Console = import("dev/console.lua")
@@ -28,11 +27,29 @@ local function readAll(path)
   return text
 end
 
+function Menu.publish(control, game, state)
+  local report = io.open(control.statusPath, "wb")
+  if report then
+    report:write(Bridge.statusText(control.console))
+    report:write("control=" .. state .. "\n")
+    if control.results then
+      report:write(table.concat(control.results, "\n") .. "\n")
+    end
+    report:write(game:BodyReport() .. "\n")
+    report:close()
+  end
+end
+
 function Menu.pump(control, game)
   local console = control.console
-  Bridge.sync(console, control.commandsPath, control.statusPath)
+  local results = Bridge.sync(console, control.commandsPath)
+  if #results > 0 then
+    control.results = results
+  end
+  local now = os.clock()
+  game:CheckEnter(now)
   if console.enterMap then
-    if game:Enter(console.enterMap) then
+    if game:Enter(console.enterMap, now) then
       console.enterMap = nil
     end
   end
@@ -40,7 +57,7 @@ function Menu.pump(control, game)
     console.play = false
     local text = readAll(control.inputsPath)
     if not text then
-      game.enterResult = "play missing inputs"
+      game.playResult = "failed missing inputs.txt; run h2t.ps1 play"
     else
       local script = Inputs.parse(text)
       for slot = 2, 4 do
@@ -51,7 +68,6 @@ function Menu.pump(control, game)
       game:BeginPlayback(script)
     end
   end
-  local now = os.clock()
   local dt = 0
   if control.lastClock then
     dt = now - control.lastClock
@@ -60,11 +76,7 @@ function Menu.pump(control, game)
   game:Install()
   game:RefreshBodies()
   game:Step(dt)
-  local report = io.open(control.statusPath, "ab")
-  if report then
-    report:write(game:BodyReport() .. "\n")
-    report:close()
-  end
+  Menu.publish(control, game, "polling")
 end
 
 return Menu
