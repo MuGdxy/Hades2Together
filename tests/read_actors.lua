@@ -202,5 +202,19 @@ assert(capture:ReadActors().room.rewards[1].id == spawned.id)
 local replacement = { ObjectId = offer.ObjectId, Name = offer.Name }
 game.MapState.RoomRequiredObjects[offer.ObjectId], game.LootObjects[offer.ObjectId] = replacement, replacement
 assert(capture:ReadActors().room.rewards[1].id == 2) -- reused engine ID, different original object
+local consumable = { ObjectId = offer.ObjectId, Name = "MaxHealthDrop" }
+game.MapState.RoomRequiredObjects[offer.ObjectId] = consumable
+game.LootObjects[offer.ObjectId] = nil
+game.MapState.ActiveObstacles = { [offer.ObjectId] = consumable }
+nativeName = consumable.Name
+assert(capture:ReadActors().room.rewards == nil) -- room-required obstacle alone
+consumable.IgnorePurchase = true
+consumable.PurchaseRequirements = {}
+assert(capture:ReadActors().room.rewards == nil)
+consumable.PurchaseRequirements = nil
+local observedConsumable = assert(capture:ReadActors().room.rewards[1])
+assert(observedConsumable.id == 3 and observedConsumable.encounterId == spawned.encounterId)
+assert(observedConsumable.kind == "MaxHealthDrop" and observedConsumable.objectId == offer.ObjectId)
+assert(observedConsumable.claims == nil)
 
 print("live actor projection passed")

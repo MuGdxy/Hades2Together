@@ -93,30 +93,36 @@ local function readExits(map)
   return exits
 end
 
-local function readAnchoredLoot(game, room, encounter)
+local function readAnchoredReward(game, room, encounter)
   local map = game.MapState
   if encounter.Name ~= "HealthRestore" or not stockId(room.SpawnRewardOnId)
     or type(map) ~= "table" or type(map.RewardPointsUsed) ~= "table"
-    or type(map.RoomRequiredObjects) ~= "table" or type(game.LootObjects) ~= "table" then
+    or type(map.RoomRequiredObjects) ~= "table" then
     return nil
   end
   local id = map.RewardPointsUsed[room.SpawnRewardOnId]
   if not stockId(id) then
     return nil
   end
-  -- Store kit placement also writes RewardPointsUsed. Require the exact
-  -- stock required-loot object at this room's declared reward point.
-  local loot = game.LootObjects[id]
-  if type(loot) ~= "table" or loot.ObjectId ~= id or loot ~= map.RoomRequiredObjects[id]
-    or loot.SpawnPointId ~= nil or not stockName(loot.Name) then
+  local reward = map.RoomRequiredObjects[id]
+  if type(reward) ~= "table" or reward.ObjectId ~= id
+    or reward.SpawnPointId ~= nil or not stockName(reward.Name) then
+    return nil
+  end
+  -- Store kit placement also writes RewardPointsUsed. Require the original
+  -- object registered as required loot or a free stock room consumable.
+  local loot = type(game.LootObjects) == "table" and game.LootObjects[id] == reward
+  local consumable = type(map.ActiveObstacles) == "table" and map.ActiveObstacles[id] == reward
+    and reward.IgnorePurchase == true and reward.PurchaseRequirements == nil
+  if not loot and not consumable then
     return nil
   end
   local args = { Id = id }
   local found, exists = gameCall("IdExists", args)
   local useRead, useable = gameCall("IsUseable", args)
   local nameRead, name = gameCall("GetName", args)
-  if found and exists == true and useRead and useable == true and nameRead and name == loot.Name then
-    return loot
+  if found and exists == true and useRead and useable == true and nameRead and name == reward.Name then
+    return reward
   end
 end
 
@@ -140,9 +146,9 @@ local function readRoom(self, game, room)
   }
   local encounter = room.Encounter
   if type(encounter) == "table" and stockName(encounter.Name) then
-    local loot = readAnchoredLoot(game, room, encounter)
+    local reward = readAnchoredReward(game, room, encounter)
     local hasCompletion = type(encounter.Completed) == "boolean"
-    if not hasCompletion and not loot then
+    if not hasCompletion and not reward then
       return view
     end
     local id = load.encounters[encounter]
@@ -154,15 +160,15 @@ local function readRoom(self, game, room)
     if hasCompletion then
       view.encounter = { id = id, name = encounter.Name, completed = encounter.Completed }
     end
-    if loot then
+    if reward then
       load.offers = load.offers or {}
-      local offerId = load.offers[loot]
+      local offerId = load.offers[reward]
       if not offerId then
         load.offerSerial = (load.offerSerial or 0) + 1
         offerId = load.offerSerial
-        load.offers[loot] = offerId
+        load.offers[reward] = offerId
       end
-      view.rewards = { { id = offerId, encounterId = id, objectId = loot.ObjectId, kind = loot.Name } }
+      view.rewards = { { id = offerId, encounterId = id, objectId = reward.ObjectId, kind = reward.Name } }
     end
   end
   return view

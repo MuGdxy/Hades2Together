@@ -42,9 +42,9 @@ python tests/net_smoke.py --lua lua --stock-room
 
 ### 已生成的原版奖励
 
-已打包的 `F_Reprieve01` 使用 `HealthRestore`。其房间开始事件先调用原版 `SpawnRoomReward`，实机只读探针在固定生成点 `40055` 观察到原版 `PoseidonUpgrade`（对象 `2000032`）。来源见 `RoomDataF.lua:2960–2974`、`EncounterData_Unique.lua:4–12`、`RoomLogic.lua:1198, 2275–2283` 及 `RewardLogic.lua:424–428`。
+已打包的 `F_Reprieve01` 使用 `HealthRestore`。其房间开始事件调用原版 `SpawnRoomReward`，两次实机只读探针在固定生成点 `40055` 分别观察到原版 `PoseidonUpgrade` 和 `MaxHealthDrop`。来源见 `RoomDataF.lua:2960–2974`、`EncounterData_Unique.lua:4–12`、`RoomLogic.lua:1198, 2275–2283`、`RewardLogic.lua:399–428` 及 `InteractLogic.lua:861–865`。
 
-当前投影仅包含 `HealthRestore` 的原版指定点上已确认可用的物件。它要求生成点的 `RewardPointsUsed` 记录、`RoomRequiredObjects` 和 `LootObjects` 指向同一个原版对象，并核对原版 `IdExists`、`IsUseable` 和 `GetName`。商店也会写 `RewardPointsUsed`，其配置见 `StoreLogic.lua:647–668`。门前预告、商店标记和未验证类型不会形成奖励记录。奖励的逻辑 ID 绑定于该进图中的原版对象表。原版在奖励已经出现时可能尚未写入 `Completed`，此时允许先送带 `encounterId` 的奖励，确认结算状态后同一 ID 会出现在遭遇记录上。
+当前投影仅包含 `HealthRestore` 的原版指定点上已确认可用的物件。它使用生成点的 `RewardPointsUsed` 记录定位 `RoomRequiredObjects` 中的对象，确认原版 `LootObjects` 或无购买要求的 `ActiveObstacles` 条目引用同一对象，再核对原版 `IdExists`、`IsUseable` 和 `GetName`。商店也会写 `RewardPointsUsed`，其配置见 `StoreLogic.lua:647–668`。门前预告、商店标记和未验证类型不会形成奖励记录。奖励的逻辑 ID 绑定于该进图中的原版对象表。原版在奖励已经出现时可能尚未写入 `Completed`，此时允许先送带 `encounterId` 的奖励，确认结算状态后同一 ID 会出现在遭遇记录上。
 
 停止展示奖励可能是物件关掉了使用、准备选择或消失。原版选择界面的 `CurrentLootData` 和 `ScreenAnchors.ChoiceScreen.Source` 只能提供上下文，实际选择的原版提交另有路径。观察模式省略未验证的奖励集合、玩家资格和领取凭据。
 
