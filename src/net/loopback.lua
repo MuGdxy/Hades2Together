@@ -1,5 +1,5 @@
 -- Two in-memory endpoints. What one sends, the other drains.
--- The UDP transport will use the same send/drain shape.
+-- TCP uses the same send/drain shape.
 
 local Loopback = {}
 

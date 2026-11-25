@@ -5,13 +5,14 @@
 | 路径 | 加载方 | 职责 |
 | --- | --- | --- |
 | `src/protocol/` | 两边 | 消息、编解码、席位。协议号在 `messages.lua`，当前是 1。 |
-| `src/net/` | 两边 | 传输。`send` / `drain`。现在只有 `loopback.lua`。 |
+| `src/net/` | 两边 | `loopback.lua` 和本机 `tcp.lua` 使用 `send` / `drain`。 |
 | `src/gameplay/` | 权威 | 纯规则。输入是事件，输出是命令。 |
 | `src/authority/loop.lua` | 权威 | 取输入，问 gameplay 要命令，交给 hack 执行，再读出快照。 |
+| `src/authority/server.lua` | 权威 | 接入 TCP、分配席位和验证输入，调用权威循环并广播完整快照。 |
 | `src/hack/engine.lua` | 两边 | hack 接口的方法表。不调用游戏。 |
 | `src/hack/fake.lua` | 测试 | 同一套方法的假世界。一只怪一条血。 |
 | `src/hack/game.lua` | 游戏进程 | 唯一允许调用游戏的文件。 |
-| `src/client/` | 客人 | 把本机操作收成 `Input`。 |
+| `src/client/` | 客人 | 把本机操作编成 `Input`，接收权威裁决并用完整快照替换视图。 |
 | `src/dev/console.lua` | 权威 | 开发命令。只改席位，不碰游戏。 |
 | `src/dev/bridge.lua` | 权威 | 执行控制页排进来的命令，并写出席位。 |
 | `src/hack/menu.lua` | 游戏进程 | 在游戏渲染时读命令队列。 |
