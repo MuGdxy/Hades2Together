@@ -63,4 +63,13 @@ function Session.release(session, index)
   return true
 end
 
+-- Frees the seat. Used by the dev console. A disconnect uses release instead.
+function Session.drop(session, index)
+  if not session.slots[index] then
+    return false
+  end
+  session.slots[index] = nil
+  return true
+end
+
 return Session

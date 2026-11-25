@@ -1,0 +1,11 @@
+{
+  "namespace": "MuGdxy",
+  "name": "Hades2Together",
+  "version_number": "0.0.1",
+  "website_url": "https://github.com/MuGdxy/Hades2Together",
+  "description": "Shared-world online play for Hades II.",
+  "dependencies": [
+    "Hell2Modding-Hell2Modding-1.0.125",
+    "LuaENVY-ENVY-1.2.1"
+  ]
+}

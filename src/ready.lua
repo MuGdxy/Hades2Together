@@ -1,10 +1,11 @@
 ---@meta _
 ---@diagnostic disable: lowercase-global
 
--- Phase 0 loads the pure layers so a bad file fails at startup.
--- It does not bind heroes or wrap game functions. That binding lives in hack/game.lua.
+-- Loads the pure layers, then the startup button and the dev command port.
+-- Spawning units stays in hack/game.lua.
 
 local Session = import("protocol/session.lua")
+local Menu = import("hack/menu.lua")
 
 import("protocol/codec.lua")
 import("protocol/messages.lua")
@@ -23,8 +24,13 @@ if not ok then
   return
 end
 
+local slot = Session.join(sessionOrErr, config.playerName or "Player")
+local listening = Menu.install(sessionOrErr, config.devPort)
+
 rom.log.info(string.format(
-  "[Hades2Together] phase 0 ready, role=%s, authority=%s",
+  "[Hades2Together] menu ready, role=%s, slot=%s, devPort=%s, listening=%s",
   sessionOrErr.role,
-  tostring(Session.isAuthority(sessionOrErr))
+  tostring(slot),
+  tostring(config.devPort),
+  tostring(listening)
 ))

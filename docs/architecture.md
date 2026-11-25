@@ -47,4 +47,4 @@ Steam 版装在：
 
 `Ship\Hades2.exe` 是带包装的发布目录，`Release\Hades2.exe` 是旁边的另一份可执行文件。社区加载器 Hell2Modding 按惯例放在 `Ship` 里，文件名是 `d3d12.dll`。
 
-这台机器目前没有 r2modman，也没有装 Hell2Modding。进游戏测试之前要先装加载器。
+开发机的 `Ship` 目录放着 Hell2Modding 的 `d3d12.dll`。插件在 `Ship\ReturnOfModding\plugins`，其中 `MuGdxy-Hades2Together` 链接到本仓库的 `src`。删掉 `d3d12.dll` 就回到原版。

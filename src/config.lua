@@ -9,4 +9,5 @@ return {
   maxPlayers = 4,
   hpPerExtraPlayer = 0.75,
   lootPolicy = "round_robin",
+  devPort = 27779,
 }
