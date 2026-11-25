@@ -21,6 +21,7 @@ param(
 $control = Join-Path $env:USERPROFILE "Hades2Together"
 $commandsPath = Join-Path $control "commands.txt"
 $statusPath = Join-Path $control "status.txt"
+$lastObserverStatus = ""
 New-Item -ItemType Directory -Force -Path $control | Out-Null
 
 function Add-ControlCommand([string]$Line) {
@@ -33,6 +34,10 @@ function Add-ControlCommand([string]$Line) {
     $stream.Close()
 }
 
+function Test-ObserverStatus([string]$Snapshot) {
+    return $Snapshot -cmatch '\Acontrol=observer(?:\r?\n|\z)'
+}
+
 function Get-ControlStatus {
     $snapshot = ""
     try {
@@ -40,9 +45,23 @@ function Get-ControlStatus {
     } catch [IO.IOException] {
         # The game may be publishing a status update.
     }
+    if (Test-ObserverStatus $snapshot) {
+        if ($snapshot -cmatch '\r?\nobserverStatus=complete\z') {
+            $script:lastObserverStatus = $snapshot.Substring(0, $snapshot.Length - $Matches[0].Length)
+            return $script:lastObserverStatus
+        }
+        if ($script:lastObserverStatus) {
+            return $script:lastObserverStatus
+        }
+        return "control=observer`nRead-only observer (one native hero)`nsnapshot=waiting"
+    }
     if (-not $snapshot) {
+        if ($script:lastObserverStatus) {
+            return $script:lastObserverStatus
+        }
         $snapshot = "control=waiting for game status"
     }
+    $script:lastObserverStatus = ""
     if (Test-Path -LiteralPath $commandsPath) {
         return "queue=waiting for game update`n$snapshot"
     }
@@ -139,18 +158,24 @@ $page = @'
 </style>
 </head>
 <body>
-<h1>多人游戏</h1>
-<p>命令会先排队，游戏开始更新后会执行并写回席位。</p>
+<h1 id="heading">多人游戏</h1>
 <pre id="status">读取中…</pre>
+<div id="controls" hidden>
+<p>命令会先排队，游戏开始更新后会执行并写回席位。</p>
 <button id="add" type="button">加入假玩家</button>
 <input id="name" placeholder="名字">
 <button id="addNamed" type="button">按名字加入</button>
 <input id="who" placeholder="席位或名字">
 <button id="remove" type="button">移除</button>
+</div>
 <script>
 async function refresh() {
   const response = await fetch("/api/status");
-  document.getElementById("status").textContent = await response.text();
+  const status = await response.text();
+  const observing = /^control=observer(?:\r?\n|$)/.test(status);
+  document.getElementById("heading").textContent = observing ? "权威状态" : "多人游戏";
+  document.getElementById("status").textContent = status;
+  document.getElementById("controls").hidden = observing;
 }
 async function send(url) {
   await fetch(url, { method: "POST" });
@@ -204,6 +229,10 @@ while ($listener.IsListening) {
             Write-Response $context "text/html; charset=utf-8" $page
         } elseif ($path -eq "/api/status") {
             Write-Response $context "text/plain; charset=utf-8" ((Get-ControlStatus) + "`n")
+        } elseif (($path -eq "/api/player/add" -or $path -eq "/api/player/remove") -and
+                  (Test-ObserverStatus (Get-ControlStatus))) {
+            $context.Response.StatusCode = 409
+            Write-Response $context "text/plain; charset=utf-8" "ERR observer is read-only`n"
         } elseif ($path -eq "/api/player/add") {
             $name = Get-QueryValue $context.Request.Url "name"
             $line = "player add"

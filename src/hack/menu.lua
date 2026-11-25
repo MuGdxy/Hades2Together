@@ -7,8 +7,7 @@ local Inputs = import("dev/inputs.lua")
 local Menu = {}
 
 function Menu.new(session)
-  local home = os.getenv("USERPROFILE") or os.getenv("HOME") or "."
-  local root = home .. "\\Hades2Together"
+  local root = Bridge.controlRoot()
   return {
     console = Console.new(session),
     commandsPath = root .. "\\commands.txt",

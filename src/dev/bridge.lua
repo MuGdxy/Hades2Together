@@ -4,6 +4,11 @@ local Console = import("dev/console.lua")
 
 local Bridge = {}
 
+function Bridge.controlRoot()
+  local home = os.getenv("USERPROFILE") or os.getenv("HOME") or "."
+  return home .. "\\Hades2Together"
+end
+
 function Bridge.applyLines(console, lines, submitInput)
   local results = {}
   for _, line in ipairs(lines) do

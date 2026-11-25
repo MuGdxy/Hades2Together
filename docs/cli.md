@@ -24,6 +24,8 @@
 
 单次按住状态通过 `h2t.ps1 input` 提交。用法、动作列表和当前的原生执行限制见 [玩家输入](input.md)。
 
+启用 [只读观察模式](network.md#实机只读观察模式) 时，`h2t.ps1 status` 与控制页显示最近发布到状态文件的权威快照。快照带一个 tick、房间和遭遇、一个原生英雄和敌人的 ID 与血量，以及已观察到的门。奖励只在快照提供奖励记录时显示。观察模式的网页隐藏席位操作，游戏暂停处理 CLI 动作队列。
+
 `player add` 不写名字时，名字从 `Fake1` 开始递增。本地玩家启动时占 1 号席，名字来自 `playerName`。
 
 `enter` 默认请求 `F_Test`，也接受 `enter F_Combat01`。游戏处理请求时会检查地图文件和 `/AllowSaveLoad=false`。已经在请求的房间时，`enter=ready` 会确认房间和英雄，无需再次加载。Steam v1.143476 没有 `F_Test.map_text`，因此请使用 `F_Combat01`。原因见 [当前卡点](blockers.md)。
