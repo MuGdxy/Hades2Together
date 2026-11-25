@@ -211,7 +211,11 @@ assert(capture:ReadActors().room.rewards == nil) -- room-required obstacle alone
 consumable.IgnorePurchase = true
 consumable.PurchaseRequirements = {}
 assert(capture:ReadActors().room.rewards == nil)
+game.LootObjects[offer.ObjectId] = consumable
+assert(capture:ReadActors().room.rewards == nil, "dual registration survives failed purchase gating")
 consumable.PurchaseRequirements = nil
+assert(capture:ReadActors().room.rewards == nil) -- ambiguous registration
+game.LootObjects[offer.ObjectId] = nil
 local observedConsumable = assert(capture:ReadActors().room.rewards[1])
 assert(observedConsumable.id == 3 and observedConsumable.encounterId == spawned.encounterId)
 assert(observedConsumable.kind == "MaxHealthDrop" and observedConsumable.objectId == offer.ObjectId)

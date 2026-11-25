@@ -113,15 +113,23 @@ local function readAnchoredReward(game, room, encounter)
   -- object registered as required loot or a free stock room consumable.
   local loot = type(game.LootObjects) == "table" and game.LootObjects[id] == reward
   local consumable = type(map.ActiveObstacles) == "table" and map.ActiveObstacles[id] == reward
-    and reward.IgnorePurchase == true and reward.PurchaseRequirements == nil
-  if not loot and not consumable then
+  if loot == consumable then
+    return nil
+  end
+  if consumable and (reward.IgnorePurchase ~= true or reward.PurchaseRequirements ~= nil) then
     return nil
   end
   local args = { Id = id }
   local found, exists = gameCall("IdExists", args)
+  if not found or exists ~= true then
+    return nil
+  end
   local useRead, useable = gameCall("IsUseable", args)
+  if not useRead or useable ~= true then
+    return nil
+  end
   local nameRead, name = gameCall("GetName", args)
-  if found and exists == true and useRead and useable == true and nameRead and name == reward.Name then
+  if nameRead and name == reward.Name then
     return reward
   end
 end
