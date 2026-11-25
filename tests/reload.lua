@@ -66,7 +66,11 @@ local function mockLoader(root)
       clock = function() return mock.clock end,
       step = function()
         mock.observed = readActors()
-        return true
+        mock.observerTick = (mock.observerTick or 0) + 1
+        return { snapshot = {
+          tick = mock.observerTick, heroes = mock.observed.heroes,
+          enemies = mock.observed.enemies, room = mock.observed.room,
+        } }
       end,
     }
   end
@@ -93,6 +97,9 @@ local function mockLoader(root)
     },
   }
   public.io = { open = function(path, mode)
+    if path == statusPath and mode == "wb" and mock.statusError then
+      error(mock.statusError, 0)
+    end
     if mode == "rb" and files[path] == nil then
       return nil
     end
@@ -101,8 +108,11 @@ local function mockLoader(root)
     end
     return {
       read = function() return files[path] end,
-      write = function(_, chunk) files[path] = (files[path] or "") .. chunk end,
-      close = function() end,
+      write = function(_, chunk)
+        files[path] = (files[path] or "") .. chunk
+        return true
+      end,
+      close = function() return true end,
     }
   end }
   public.os = {
@@ -158,6 +168,10 @@ local function mockLoader(root)
     files[commandsPath] = text
   end
 
+  function mock:status()
+    return files[statusPath]
+  end
+
   function mock:removeMapAsset(mapName)
     files["mock-content/Maps/" .. mapName .. ".map_text"] = nil
   end
@@ -192,6 +206,7 @@ return function(root, test, eq)
     ]])
     mod.edits["hack/game.lua"] = game:gsub("VERSION", '"first"')
     mod:reload()
+    assert(mod:status():find("snapshot=waiting", 1, true))
     mod.game.CurrentRun = { CurrentRoom = {
       Name = "F_Combat01", Encounter = { Name = "FIntroFight", Completed = false },
     } }
@@ -199,7 +214,10 @@ return function(root, test, eq)
     mod.game.SessionMapState = { DeferredObstacleInitializationFinished = true }
     eq(#mod.maps, 1)
     mod.maps[1]({ name = "F_Combat01" })
-    mod:poll(0)
+    local firstStatus = mod:poll(0)
+    assert(firstStatus:find("Read-only observer (one native hero)\ntick=1\n", 1, true), firstStatus)
+    assert(firstStatus:find("room=F_Combat01 id=1", 1, true), firstStatus)
+    assert(firstStatus:find("encounter=FIntroFight id=1 completed=false", 1, true), firstStatus)
     eq(mod.observed.version, "first")
     eq(mod.observed.room.id, 1)
     eq(mod.observed.room.encounter.id, 1)
@@ -214,6 +232,8 @@ return function(root, test, eq)
     eq(mod.observed.version, "first")
     mod:poll(0.06)
     eq(mod.observed.version, "second")
+    eq(mod.observerTick, 2)
+    eq(mod:status(), firstStatus)
     eq(mod.observed.room.id, 1)
     eq(mod.observed.room.encounter.id, 1)
     eq(mod.observerStarts, 1)
@@ -221,6 +241,61 @@ return function(root, test, eq)
     eq(#mod.maps, 1)
     eq(mod.polls, 0)
     eq(#mod.warnings, 0)
+    mod.statusError = "fixture status sink failed"
+    eq(mod:poll(0.26), firstStatus)
+    eq(mod.observerTick, 3)
+    eq(#mod.warnings, 0)
+    mod.statusError = nil
+    mod.edits["dev/observer_status.lua"] = "error('invalid optional status edit')"
+    mod:reload()
+    local recovered = mod:poll(0.52)
+    assert(recovered:find("tick=4\n", 1, true), recovered)
+    eq(#mod.warnings, 0)
+    eq(mod.observerStarts, 1)
+
+    mod.edits["dev/observer_status.lua"] = "return 17"
+    mod.edits["hack/game.lua"] = game:gsub("VERSION", '"third"')
+    mod:reload()
+    local afterMalformedReturn = mod:poll(0.78)
+    assert(afterMalformedReturn:find("tick=5\n", 1, true), afterMalformedReturn)
+    eq(mod.observed.version, "third")
+    eq(mod.observerStarts, 1)
+    eq(#mod.frames, 1)
+    eq(#mod.warnings, 0)
+  end)
+
+  test("observer status formats only the fields supplied by the authoritative snapshot", function()
+    local Status = import("dev/observer_status.lua")
+    local snapshot = {
+      tick = 42, heroes = { { id = 40000, hp = 19.5, maxHp = 30 } },
+      enemies = { { id = 1000001, hp = 0, maxHp = 255, kind = "Brawler" } },
+      room = {
+        id = 2, name = "F_Combat01", leaving = false, exitsUnlocked = true,
+        exits = {
+          { id = 10, readyToUse = false, inUse = false },
+          { id = 20, readyToUse = true, inUse = true, destination = "F_Reprieve01" },
+        },
+      },
+    }
+    local first = Status.format(snapshot)
+    assert(first:find("tick=42\n", 1, true))
+    assert(first:find("encounter=unavailable\n", 1, true))
+    assert(first:find("hero id=40000 hp=19.5/30\n", 1, true))
+    assert(first:find("enemy id=1000001 hp=0/255 kind=Brawler\n", 1, true))
+    assert(first:find("door id=10 readyToUse=false inUse=false\n", 1, true))
+    assert(first:find("door id=20 readyToUse=true inUse=true destination=F_Reprieve01\n", 1, true))
+    eq(first:find("reward", 1, true), nil)
+    snapshot.room.rewards = { { id = 3, kind = "PoseidonUpgrade", encounterId = 2, objectId = 2000032 } }
+    local reward = Status.format(snapshot)
+    assert(reward:find("reward id=3 kind=PoseidonUpgrade encounterId=2 objectId=2000032\n", 1, true))
+    snapshot.room.exits = {}
+    assert(Status.format(snapshot):find("doors=none\n", 1, true))
+    snapshot.room = nil
+    local loading = Status.format(snapshot)
+    assert(loading:find("room=unavailable\n", 1, true))
+    assert(loading:match("observerStatus=complete\n$"))
+    eq(loading:find("door ", 1, true), nil)
+    eq(loading:find("reward", 1, true), nil)
   end)
 
   test("loader reload preserves playback input frames and installs one control poll", function()

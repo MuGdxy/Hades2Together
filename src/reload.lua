@@ -11,6 +11,7 @@ local gameState
 local frameError
 local observer
 local nextSnapshot = 0
+local nextObserverStatus = 0
 
 local function candidateRuntime()
   local env = setmetatable({}, { __index = pluginEnv })
@@ -30,7 +31,7 @@ local function candidateRuntime()
     ["hack/menu.lua"] = { "new", "pump", "publish" },
     ["hack/game.lua"] = { "new", "Install", "OnMap", "CheckEnter",
       "Enter", "BeginPlayback", "PushInput", "Step", "BodyReport" },
-    ["dev/bridge.lua"] = { "sync", "statusText" },
+    ["dev/bridge.lua"] = { "controlRoot", "sync", "statusText" },
     ["dev/console.lua"] = { "new", "execute" },
     ["dev/inputs.lua"] = { "parse", "stick" },
     ["protocol/session.lua"] = { "new", "join", "count", "drop" },
@@ -44,7 +45,23 @@ local function candidateRuntime()
   assert(candidate.Game == loaded["hack/game.lua"]
     and candidate.Menu == loaded["hack/menu.lua"]
     and candidate.Session == loaded["protocol/session.lua"], "ready.lua must return Game, Menu and Session")
+  if config.observerSnapshots then
+    local ok, status = pcall(envyImport, "dev/observer_status.lua", env)
+    if ok and type(status) == "table" and type(status.publish) == "function" then
+      candidate.ObserverStatus = status
+    elseif active then
+      candidate.ObserverStatus = active.ObserverStatus
+    end
+  end
   return candidate
+end
+
+local function publishObserverStatus(snapshot)
+  -- Status is optional. Send the network snapshot first and tolerate a missing
+  -- control directory or a file that another process is reading.
+  if active.ObserverStatus then
+    pcall(active.ObserverStatus.publish, snapshot)
+  end
 end
 
 local function frame()
@@ -58,6 +75,10 @@ local function frame()
     ok, err = pcall(function()
       local result, failure = observer:step()
       assert(result, failure)
+      if now >= nextObserverStatus then
+        nextObserverStatus = now + 0.25
+        publishObserverStatus(result.snapshot)
+      end
     end)
   elseif not config.observerSnapshots then
     ok, err = pcall(active.Menu.pump, control, gameState)
@@ -120,6 +141,7 @@ function Reload.load()
       if not started then
         rom.log.warning("[Hades2Together] observer startup failed: " .. tostring(err))
       end
+      publishObserverStatus()
       return
     end
     gameState:Install()
