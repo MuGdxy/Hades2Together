@@ -54,6 +54,71 @@ function Game:BindHero(playerId)
   end
 end
 
+local function finite(value)
+  return type(value) == "number" and value == value and math.abs(value) < math.huge
+end
+
+local function readActor(self, unit)
+  if type(unit) ~= "table" then
+    return nil
+  end
+  local id, hp, maxHp = unit.ObjectId, unit.Health, unit.MaxHealth
+  if not finite(id) or id <= 0 or id % 1 ~= 0
+      or not finite(hp) or hp < 0 or not finite(maxHp) or maxHp <= 0 then
+    return nil
+  end
+
+  local args = { Id = id }
+  local nameRead, kind = gameCall("GetName", args)
+  local lifeRead, alive = gameCall("IsAlive", args)
+  local x, y = self:location(id)
+  if not nameRead or type(kind) ~= "string" or kind == "" or not lifeRead
+      or type(alive) ~= "boolean" or not finite(x) or not finite(y) then
+    return nil
+  end
+  local facingRead, facing = gameCall("GetAngle", args)
+  return {
+    id = id, kind = kind, x = x, y = y, hp = hp, maxHp = maxHp,
+    alive = alive and not unit.IsDead,
+    facing = facingRead and finite(facing) and facing or nil,
+  }
+end
+
+function Game:ReadActors()
+  local actors = { heroes = {}, enemies = {} }
+  local game = rom and rom.game
+  local run = game and game.CurrentRun
+  if type(run) ~= "table" or type(run.CurrentRoom) ~= "table" then
+    return actors
+  end
+  local hero = readActor(self, run.Hero)
+  if hero then
+    actors.heroes[1] = hero
+  end
+
+  local activeEnemies = game.ActiveEnemies
+  local teamRead, teamIds = gameCall("GetIds", { Name = "EnemyTeam" })
+  if type(activeEnemies) ~= "table" or not teamRead or type(teamIds) ~= "table" then
+    return actors
+  end
+  local seen = {}
+  local heroId = self:HeroId()
+  for _, id in ipairs(teamIds) do
+    if finite(id) and not seen[id] and id ~= heroId then
+      seen[id] = true
+      local unit = activeEnemies[id]
+      if type(unit) == "table" and unit.ObjectId == id and not unit.IsDead then
+        local enemy = readActor(self, unit)
+        if enemy and enemy.alive then
+          actors.enemies[#actors.enemies + 1] = enemy
+        end
+      end
+    end
+  end
+  table.sort(actors.enemies, function(a, b) return a.id < b.id end)
+  return actors
+end
+
 local function held(readControl, name)
   return readControl({ Name = name }) and 1 or 0
 end
