@@ -54,6 +54,22 @@ local function mockLoader(root)
     mock.inputs[#mock.inputs + 1] = { seat = seat, frame = frame }
     return true
   end
+  public.require = function(name)
+    assert(name == "socket")
+    return mock.observerSocket
+  end
+  public.bindObserver = function(socket, port, readActors)
+    assert(socket == mock.observerSocket and port == 0)
+    mock.observerStarts = (mock.observerStarts or 0) + 1
+    return {
+      port = function() return 12345 end,
+      clock = function() return mock.clock end,
+      step = function()
+        mock.observed = readActors()
+        return true
+      end,
+    }
+  end
   local private = setmetatable({ public = public }, { __index = public })
   public.rom = {
     game = game,
@@ -154,6 +170,43 @@ local function mockLoader(root)
 end
 
 return function(root, test, eq)
+  test("observer bootstrap preserves its listener and only reads the game", function()
+    local mod = mockLoader(root)
+    mod.observerSocket = {}
+    mod.edits["config.lua"] = "return { observerSnapshots = true, port = 0 }"
+    mod.edits["authority/server.lua"] = "return { observe = bindObserver }"
+    mod.edits["hack/menu.lua"] = [[
+      local function forbidden() error("observer used CLI game controls") end
+      return { new = forbidden, pump = forbidden, publish = forbidden }
+    ]]
+    local game = readSource(root, "hack/game.lua"):gsub("return Game\n", [[
+      local function forbidden() error("observer used a game write method") end
+      Game.BindHero, Game.PushInput, Game.Install, Game.Step = forbidden, forbidden, forbidden, forbidden
+      Game.ReadActors = function() return VERSION end
+      return Game
+    ]])
+    mod.edits["hack/game.lua"] = game:gsub("VERSION", '"first"')
+    mod:reload()
+    mod:poll(0)
+    eq(mod.observed, "first")
+    eq(mod.observerStarts, 1)
+    eq(#mod.frames, 1)
+    eq(#mod.maps, 0)
+    eq(mod.polls, 0)
+    eq(#mod.warnings, 0)
+
+    mod.edits["hack/game.lua"] = game:gsub("VERSION", '"second"')
+    mod:reload()
+    mod:poll(0.01)
+    eq(mod.observed, "first")
+    mod:poll(0.06)
+    eq(mod.observed, "second")
+    eq(mod.observerStarts, 1)
+    eq(#mod.frames, 1)
+    eq(mod.polls, 0)
+    eq(#mod.warnings, 0)
+  end)
+
   test("loader reload preserves playback input frames and installs one control poll", function()
     local mod = mockLoader(root)
     mod.game.CurrentRun = { CurrentRoom = { Name = "F_Test" }, Hero = { ObjectId = 99 } }
