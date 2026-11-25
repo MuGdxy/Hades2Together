@@ -252,6 +252,16 @@ return function(root, test, eq)
     assert(recovered:find("tick=4\n", 1, true), recovered)
     eq(#mod.warnings, 0)
     eq(mod.observerStarts, 1)
+
+    mod.edits["dev/observer_status.lua"] = "return 17"
+    mod.edits["hack/game.lua"] = game:gsub("VERSION", '"third"')
+    mod:reload()
+    local afterMalformedReturn = mod:poll(0.78)
+    assert(afterMalformedReturn:find("tick=5\n", 1, true), afterMalformedReturn)
+    eq(mod.observed.version, "third")
+    eq(mod.observerStarts, 1)
+    eq(#mod.frames, 1)
+    eq(#mod.warnings, 0)
   end)
 
   test("observer status formats only the fields supplied by the authoritative snapshot", function()

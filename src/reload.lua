@@ -46,8 +46,8 @@ local function candidateRuntime()
     and candidate.Menu == loaded["hack/menu.lua"]
     and candidate.Session == loaded["protocol/session.lua"], "ready.lua must return Game, Menu and Session")
   if config.observerSnapshots then
-    local ok, status = pcall(env.import, "dev/observer_status.lua")
-    if ok and type(status.publish) == "function" then
+    local ok, status = pcall(envyImport, "dev/observer_status.lua", env)
+    if ok and type(status) == "table" and type(status.publish) == "function" then
       candidate.ObserverStatus = status
     elseif active then
       candidate.ObserverStatus = active.ObserverStatus

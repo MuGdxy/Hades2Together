@@ -35,7 +35,9 @@ function Add-ControlCommand([string]$Line) {
 }
 
 function Test-ObserverStatus([string]$Snapshot) {
-    return $Snapshot -cmatch '\Acontrol=observer(?:\r?\n|\z)'
+    # A reader can see only the first bytes of the header during a write.
+    return ($Snapshot -cmatch '\Acontrol=observer(?:\r?\n|\z)') -or
+        ($Snapshot.Length -gt 0 -and "control=observer".StartsWith($Snapshot, [StringComparison]::Ordinal))
 }
 
 function Get-ControlStatus {
