@@ -36,4 +36,4 @@ python tests/net_smoke.py --lua texlua
 
 外部进程通过 `Client.connect(socket, port, name)` 和 `Client:poll()` 接收完整状态，最多四个观察席。同名断开重连沿用席位，并从下一份完整快照恢复。观察模式使用 `Game:ReadActors()`，输入消息会被拒绝，游戏内的 CLI 动作队列暂停处理。实机验证观察到一个原生英雄和原版遭遇；观察席仅用于网络连接。
 
-从仓库根目录运行 `texlua tests/observer.lua` 检查只读传输、输入拒绝和重连。
+从仓库根目录运行 `texlua tests/observer.lua` 检查只读传输、输入拒绝和重连。房间及门的读取范围和实机证据见 [实机只读投影](room-rewards.md#实机只读投影)。

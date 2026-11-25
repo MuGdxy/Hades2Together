@@ -61,6 +61,69 @@ local function finite(value)
   return type(value) == "number" and value == value and math.abs(value) < math.huge
 end
 
+local function stockName(value)
+  return type(value) == "string" and #value > 0 and #value <= 128 and not value:find("%c")
+end
+
+local function stockId(value)
+  return Messages.validTick(value) and value > 0
+end
+
+local function readExits(map)
+  if type(map) ~= "table" or type(map.OfferedExitDoors) ~= "table" then
+    return nil
+  end
+  local exits = {}
+  for id, door in pairs(map.OfferedExitDoors) do
+    if stockId(id) and type(door) == "table" and door.ObjectId == id then
+      local ok, exists = gameCall("IdExists", { Id = id })
+      if not ok or type(exists) ~= "boolean" then
+        return nil
+      end
+      if exists then
+        local destination = type(door.Room) == "table" and door.Room.Name
+        exits[#exits + 1] = {
+          id = id, readyToUse = door.ReadyToUse == true, inUse = door.InUse == true,
+          destination = stockName(destination) and destination or nil,
+        }
+      end
+    end
+  end
+  table.sort(exits, function(a, b) return a.id < b.id end)
+  return exits
+end
+
+local function readRoom(self, game, room)
+  local load = self.roomLoad
+  local mapState = game.SessionMapState
+  -- LeaveRoom can assign the next room before the old map stops updating.
+  if not load or load.room ~= room or load.name ~= room.Name
+    or type(game.SessionState) ~= "table" or load.generation ~= game.SessionState.MapLoads
+    or load.mapState ~= mapState or mapState.DeferredObstacleInitializationFinished ~= true then
+    return nil
+  end
+  if not load.id then
+    self.roomSerial = (self.roomSerial or 0) + 1
+    load.id = self.roomSerial
+  end
+  local view = {
+    id = load.id, name = load.name,
+    leaving = room.Leaving == true, exitsUnlocked = room.ExitsUnlocked == true,
+    exits = readExits(game.MapState),
+  }
+  local encounter = room.Encounter
+  if type(encounter) == "table" and stockName(encounter.Name) and type(encounter.Completed) == "boolean" then
+    local id = load.encounters[encounter]
+    if not id then
+      load.encounterSerial = load.encounterSerial + 1
+      id = load.encounterSerial
+      load.encounters[encounter] = id
+    end
+    view.encounter = { id = id, name = encounter.Name, completed = encounter.Completed }
+  end
+  return view
+end
+
 local function readActor(self, unit)
   if type(unit) ~= "table" then
     return nil
@@ -94,6 +157,7 @@ function Game:ReadActors()
   if type(run) ~= "table" or type(run.CurrentRoom) ~= "table" then
     return actors
   end
+  actors.room = readRoom(self, game, run.CurrentRoom)
   local hero = readActor(self, run.Hero)
   if hero then
     actors.heroes[1] = hero
@@ -318,6 +382,22 @@ end
 
 function Game:OnMap(name)
   self.map = name
+  local game = rom.game
+  local run, session, mapState = game.CurrentRun, game.SessionState, game.SessionMapState
+  local room = type(run) == "table" and run.CurrentRoom
+  local generation = type(session) == "table" and session.MapLoads
+  if type(room) ~= "table" or not stockName(name) or room.Name ~= name
+    or not stockId(generation) or type(mapState) ~= "table" then
+    self.roomLoad = nil
+    return
+  end
+  local load = self.roomLoad
+  if not load or load.room ~= room or load.generation ~= generation or load.mapState ~= mapState then
+    self.roomLoad = {
+      room = room, name = name, generation = generation, mapState = mapState,
+      encounters = {}, encounterSerial = 0,
+    }
+  end
 end
 
 function Game:Install()

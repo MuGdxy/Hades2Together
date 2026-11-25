@@ -115,6 +115,7 @@ function Reload.load()
   end
   if newGame then
     if config.observerSnapshots then
+      gameState:Install()
       local started, err = pcall(startObserver)
       if not started then
         rom.log.warning("[Hades2Together] observer startup failed: " .. tostring(err))

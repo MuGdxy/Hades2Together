@@ -79,9 +79,10 @@ function Room.valid(room)
   if room.participants ~= nil and not participants then
     return false
   end
-  return unique(room.exits, exitId) ~= nil and (room.rewards == nil or unique(room.rewards, function(reward)
-    return rewardId(reward, participants)
-  end) ~= nil)
+  return (room.exits == nil or unique(room.exits, exitId) ~= nil)
+    and (room.rewards == nil or unique(room.rewards, function(reward)
+      return rewardId(reward, participants)
+    end) ~= nil)
 end
 
 return Room

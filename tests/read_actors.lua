@@ -85,4 +85,70 @@ game.CurrentRun = nil
 local empty = capture:ReadActors()
 assert(#empty.heroes == 0 and #empty.enemies == 0)
 
+local combat = { Name = "FIntroFight", Completed = false }
+local omitted = { ObjectId = 40, ReadyToUse = true, InUse = true }
+local locked = { ObjectId = 42 }
+local ready = { ObjectId = 41, ReadyToUse = true, InUse = true, Room = { Name = "F_Combat02" } }
+local room = { Name = "F_Combat01", Encounter = combat }
+game.CurrentRun = { CurrentRoom = room, Hero = hero }
+game.SessionState = { MapLoads = 1 }
+game.SessionMapState = {}
+game.MapState = {
+  OfferedExitDoors = { [42] = locked, [41] = ready, [40] = omitted, [99] = locked },
+  RoomRequiredObjects = { [43] = { ObjectId = 43 } },
+}
+game.IdExists = function(args) return args.Id ~= 40 end
+assert(capture:ReadActors().room == nil)
+capture:OnMap("F_Combat01")
+assert(capture:ReadActors().room == nil)
+game.SessionMapState.DeferredObstacleInitializationFinished = true
+local opened = assert(capture:ReadActors().room)
+assert(opened.id == 1 and opened.name == "F_Combat01" and not opened.leaving and not opened.exitsUnlocked)
+assert(opened.encounter.id == 1 and not opened.encounter.completed and opened.encounter.name == "FIntroFight")
+assert(#opened.exits == 2 and opened.exits[1].id == 41 and opened.exits[2].id == 42)
+assert(opened.exits[1].readyToUse and opened.exits[1].inUse and opened.exits[1].destination == "F_Combat02")
+assert(not opened.exits[2].readyToUse and not opened.exits[2].inUse and opened.exits[2].destination == nil)
+assert(opened.participants == nil and opened.rewards == nil)
+assert(environment.import("protocol/room.lua").valid(opened))
+
+combat.Completed = true
+room.ExitsUnlocked = true
+room.Leaving = true
+capture:OnMap("F_Combat01") -- duplicate notification for the same load
+local leaving = assert(capture:ReadActors().room)
+assert(leaving.id == opened.id and leaving.encounter.id == opened.encounter.id)
+assert(leaving.encounter.completed and leaving.leaving and leaving.exitsUnlocked)
+assert(not opened.encounter.completed and not opened.leaving)
+room.Encounter = { Name = "FIntroFight", Completed = false }
+assert(capture:ReadActors().room.encounter.id == 2)
+room.Encounter.Completed = nil
+assert(capture:ReadActors().room.encounter == nil)
+
+-- Stock can assign a new entry to the same map before unloading the old map.
+local revisit = { Name = room.Name, Encounter = { Name = combat.Name, Completed = false } }
+game.CurrentRun.CurrentRoom = revisit
+assert(capture:ReadActors().room == nil)
+game.SessionState.MapLoads = 2
+game.SessionMapState = {}
+game.MapState = { OfferedExitDoors = {} }
+capture:OnMap("F_Combat01")
+assert(capture:ReadActors().room == nil)
+game.SessionMapState.DeferredObstacleInitializationFinished = true
+local afterLoad = assert(capture:ReadActors().room)
+assert(afterLoad.id == 2 and afterLoad.name == room.Name and #afterLoad.exits == 0)
+assert(afterLoad.encounter.id == 1 and not afterLoad.encounter.completed)
+
+-- Native can also reload with the same room object. The load still has a new ID.
+game.SessionState.MapLoads = 3
+assert(capture:ReadActors().room == nil)
+game.SessionMapState = { DeferredObstacleInitializationFinished = true }
+game.MapState = { OfferedExitDoors = { [42] = locked } }
+game.IdExists = nil
+capture:OnMap("F_Combat02")
+assert(capture:ReadActors().room == nil)
+capture:OnMap("F_Combat01")
+local unavailableExits = assert(capture:ReadActors().room)
+assert(unavailableExits.id == 3 and unavailableExits.exits == nil)
+assert(environment.import("protocol/room.lua").valid(unavailableExits))
+
 print("live actor projection passed")

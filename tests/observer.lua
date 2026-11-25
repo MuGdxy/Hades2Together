@@ -19,7 +19,14 @@ local Codec = environment.import("protocol/codec.lua")
 local reads = 0
 local server = assert(Server.observe(socket, 0, function()
   reads = reads + 1
-  return { heroes = { { id = 40000, hp = 30 - reads } }, enemies = {} }
+  return {
+    heroes = { { id = 40000, hp = 30 - reads } }, enemies = {},
+    room = {
+      id = 1, name = "F_Combat01", leaving = false, exitsUnlocked = false,
+      encounter = { id = 1, name = "FIntroFight", completed = false },
+      exits = { { id = 42, readyToUse = false, inUse = false } },
+    },
+  }
 end))
 local client = assert(Client.connect(socket, server:port(), "Observer"))
 
@@ -38,6 +45,8 @@ local function waitForSnapshot(earlierTick, expectedError)
     if client.snapshot and client.tick > earlierTick and rejection == expectedError then
       assert(client.tick == result.snapshot.tick)
       assert(Codec.encode(client.snapshot) == Codec.encode(result.snapshot))
+      assert(client.snapshot.room.name == "F_Combat01" and client.snapshot.room.id == 1)
+      assert(client.snapshot.room.encounter.name == "FIntroFight" and not client.snapshot.room.exits[1].readyToUse)
       return
     end
     socket.sleep(0.005)

@@ -181,28 +181,44 @@ return function(root, test, eq)
     ]]
     local game = readSource(root, "hack/game.lua"):gsub("return Game\n", [[
       local function forbidden() error("observer used a game write method") end
-      Game.BindHero, Game.PushInput, Game.Install, Game.Step = forbidden, forbidden, forbidden, forbidden
-      Game.ReadActors = function() return VERSION end
+      Game.BindHero, Game.PushInput, Game.Step = forbidden, forbidden, forbidden
+      local read = Game.ReadActors
+      Game.ReadActors = function(self)
+        local sample = read(self)
+        sample.version = VERSION
+        return sample
+      end
       return Game
     ]])
     mod.edits["hack/game.lua"] = game:gsub("VERSION", '"first"')
     mod:reload()
+    mod.game.CurrentRun = { CurrentRoom = {
+      Name = "F_Combat01", Encounter = { Name = "FIntroFight", Completed = false },
+    } }
+    mod.game.SessionState = { MapLoads = 1 }
+    mod.game.SessionMapState = { DeferredObstacleInitializationFinished = true }
+    eq(#mod.maps, 1)
+    mod.maps[1]({ name = "F_Combat01" })
     mod:poll(0)
-    eq(mod.observed, "first")
+    eq(mod.observed.version, "first")
+    eq(mod.observed.room.id, 1)
+    eq(mod.observed.room.encounter.id, 1)
     eq(mod.observerStarts, 1)
     eq(#mod.frames, 1)
-    eq(#mod.maps, 0)
     eq(mod.polls, 0)
     eq(#mod.warnings, 0)
 
     mod.edits["hack/game.lua"] = game:gsub("VERSION", '"second"')
     mod:reload()
     mod:poll(0.01)
-    eq(mod.observed, "first")
+    eq(mod.observed.version, "first")
     mod:poll(0.06)
-    eq(mod.observed, "second")
+    eq(mod.observed.version, "second")
+    eq(mod.observed.room.id, 1)
+    eq(mod.observed.room.encounter.id, 1)
     eq(mod.observerStarts, 1)
     eq(#mod.frames, 1)
+    eq(#mod.maps, 1)
     eq(mod.polls, 0)
     eq(#mod.warnings, 0)
   end)

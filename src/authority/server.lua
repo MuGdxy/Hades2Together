@@ -1,5 +1,6 @@
 local Authority = import("authority/loop.lua")
 local Messages = import("protocol/messages.lua")
+local Room = import("protocol/room.lua")
 local Session = import("protocol/session.lua")
 local Tcp = import("net/tcp.lua")
 
@@ -183,8 +184,9 @@ function Server:step()
   local result
   if self.readActors then
     local actors = self.readActors()
+    assert(actors.room == nil or Room.valid(actors.room), "invalid observed room projection")
     self.tick = self.tick + 1
-    result = { snapshot = Messages.snapshot(self.tick, actors.heroes, actors.enemies), commands = {} }
+    result = { snapshot = Messages.snapshot(self.tick, actors.heroes, actors.enemies, actors.room), commands = {} }
   else
     result = solve(self)
   end

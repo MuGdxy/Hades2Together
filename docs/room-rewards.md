@@ -28,11 +28,17 @@ python tests/net_smoke.py --lua lua --stock-room
 
 - `room.id` 是本次权威会话中递增的进图实例编号，并随会话保持。重复地图名、返回同一地图和对象 ID 重用都可以产生新实例。`name` 只是地图名。缺少一致的进图状态时省略 `room`。
 - `room.encounter` 是可选的当前原版遭遇记录，带房间内的实例 `id`、`name` 和 `completed`。多个同名遭遇需要不同实例 ID；角色消失或怪物血量为零不决定完成状态。
-- `room.leaving`、`room.exitsUnlocked`、`room.exits` 分别投影离开、房间解锁及原版提供的门。门记录带原版对象 `id`、`readyToUse`、`inUse` 和可选的已知 `destination`。客户端提示仍以权威状态为准，使用动作走原版检查。
+- `room.leaving`、`room.exitsUnlocked` 和可选 `room.exits` 分别投影离开、房间解锁及原版提供的门。门记录带原版对象 `id`、`readyToUse`、`inUse` 和可选的已知 `destination`。客户端提示仍以权威状态为准，使用动作走原版检查。
 - `room.participants` 是可选的已验证席位数组，含仍保留资格的断线席位。参与资格由权威在相应原版奖励机会出现时确认。重连继承原席位；新连接或晚加入不能靠请求获得旧机会。
 - `room.rewards` 是可选的当前房间奖励记录数组。每条记录带房间内唯一的逻辑机会 `id`、所属 `encounterId`、`kind` 和可选的原版 `objectId`。后者是当前物件的引用。已消耗机会可在当前房间内继续携带凭据，即使物件消失。
 - 每个机会的可选 `claims` 数组每席至多一条，带 `playerId` 和 `state`（`eligible`、`claiming` 或 `consumed`），已消费时可带观测到的 `choice`。消耗只在原版提交确认后记录，且同一机会同一席只提交一次。缺少 `participants`、`rewards` 或 `claims` 表示尚未得到对应观察，空数组表示已观察到该集合为空。
 - 客户端从全量快照恢复当前视图，并丢弃较旧的 tick 和回退的房间实例。换房即替换旧房的敌人、门和奖励视图，也能从下一房的一份快照加入。房间、门、奖励和领取状态没有独立的客户端写入入口。
+
+## 实机只读投影
+
+`Game:ReadActors()` 在原版 `OnAnyLoad` 通知的名称、房间表、`SessionState.MapLoads` 及 `SessionMapState` 一致，且原版已完成延后物件初始化时附带房间数据。对应原版顺序见 `RoomLogic.lua:126–175, 180–236, 295–359`。装载确认前省略房间作用域。同一地图的不同进图使用不同编号；同一进图中的主遭遇以原版遭遇表保持身份。Lua 热更新沿用同一游戏实例及已登记的加载回调。门来自 `MapState.OfferedExitDoors`，通过原版 `IdExists` 核对对象；读取不到门时省略 `exits`。未确认当前奖励归属和逐席资格，实机投影省略 `rewards` 和 `participants`。
+
+关闭覆盖层且禁用存档的 `F_Combat01` 实机验证中，四个 localhost 观察端收到同一份房间、`FIntroFight` 和锁定的原版门 `560570`，热更新和重连后房间及遭遇编号不变。该次遭遇仍在进行。真实关卡完成、可用门的使用及原版奖励领取仍需验证。同名地图重访、装载窗口及不同遭遇的编号由 `texlua tests/read_actors.lua` 的夹具覆盖，只读传输用 `texlua tests/observer.lua` 检查。运行实机观察端见 [观察模式](network.md#实机只读观察模式)。
 
 ## 后续原版接入
 
