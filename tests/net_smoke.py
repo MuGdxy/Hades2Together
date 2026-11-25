@@ -21,13 +21,14 @@ def wait_for_file(path, processes):
     return path.read_text().strip()
 
 
-def smoke(lua, directory):
+def smoke(lua, directory, stock_room):
     processes = {}
     output = {}
+    worker = "tests/room_smoke.lua" if stock_room else "tests/net_smoke.lua"
 
     def start(name, role, *args):
         process = subprocess.Popen(
-            [lua, "tests/net_smoke.lua", role, str(directory), *map(str, args)],
+            [lua, worker, role, str(directory), *map(str, args)],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -48,7 +49,10 @@ def smoke(lua, directory):
             output[name], _ = process.communicate(timeout=max(1, deadline - time.monotonic()))
             if process.returncode:
                 raise RuntimeError(f"{name} exited with code {process.returncode}")
-        pattern = r"result tick=(\d+) enemy=(\d+) hp=(\d+) loot=(\d+)"
+        pattern = (
+            r"result tick=(\d+) room=(\d+) previous=(\d+) consumed=(\d+)"
+            if stock_room else r"result tick=(\d+) enemy=(\d+) hp=(\d+) loot=(\d+)"
+        )
         results = {name: re.findall(pattern, log) for name, log in output.items()}
         server_result = results["authority"]
         if len(server_result) != 1 or any(result != server_result for result in results.values()):
@@ -67,6 +71,7 @@ def smoke(lua, directory):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lua", default="lua", help="Lua executable with require('socket') available")
+    parser.add_argument("--stock-room", action="store_true", help="run the room and reward observation fixture")
     options = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="h2t-tcp-", dir=os.environ.get("AGENT_SERVER_TMP")) as scratch:
-        smoke(options.lua, Path(scratch))
+        smoke(options.lua, Path(scratch), options.stock_room)

@@ -6,39 +6,9 @@ end
 
 local socket = require("socket")
 
-local role, directory = arg[1], arg[2]
-
-local function mark(name, value)
-  local path = directory .. "/" .. name
-  local file = assert(io.open(path .. ".tmp", "w"))
-  assert(file:write(tostring(value), "\n"))
-  assert(file:close())
-  assert(os.rename(path .. ".tmp", path))
-end
-
-local function marked(name)
-  local file = io.open(directory .. "/" .. name, "r")
-  if file then
-    file:close()
-    return true
-  end
-end
-
-local function waitFor(label, poll)
-  local deadline = socket.gettime() + 10
-  repeat
-    local value = poll()
-    if value then
-      return value
-    end
-    socket.sleep(0.01)
-  until socket.gettime() >= deadline
-  error("timed out waiting for " .. label)
-end
-
-local function equal(actual, expected, label)
-  assert(actual == expected, label .. ": expected " .. tostring(expected) .. ", got " .. tostring(actual))
-end
+local role = arg[1]
+local Support = dofile("tests/net_smoke_support.lua")
+local mark, marked, waitFor, equal = Support.mark, Support.marked, Support.waitFor, Support.equal
 
 local function checkAction(actor)
   local action = assert(actor.action, "authoritative action missing")

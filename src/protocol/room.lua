@@ -1,0 +1,87 @@
+local Messages = import("protocol/messages.lua")
+local Session = import("protocol/session.lua")
+
+local Room = {}
+
+local function id(value)
+  return Messages.validTick(value) and value > 0
+end
+
+local function name(value)
+  return type(value) == "string" and #value > 0 and #value <= 128 and not value:find("%c")
+end
+
+local function seat(value)
+  if id(value) and value <= Session.MAX_PLAYERS then
+    return value
+  end
+end
+
+-- Return the record keys so rewards can also check room membership.
+local function unique(list, keyFor)
+  if type(list) ~= "table" then
+    return nil
+  end
+  local keys, count, length = {}, 0, #list
+  for index, record in pairs(list) do
+    if not id(index) or index > length then
+      return nil
+    end
+    local key = keyFor(record)
+    if not key or keys[key] then
+      return nil
+    end
+    keys[key] = true
+    count = count + 1
+  end
+  if count == length then
+    return keys
+  end
+end
+
+local function exitId(exit)
+  if type(exit) == "table" and id(exit.id) and type(exit.readyToUse) == "boolean"
+    and type(exit.inUse) == "boolean" and (exit.destination == nil or name(exit.destination)) then
+    return exit.id
+  end
+end
+
+local claimStates = { eligible = true, claiming = true, consumed = true }
+
+local function rewardId(reward, participants)
+  if type(reward) ~= "table" or not id(reward.id) or not id(reward.encounterId)
+    or not name(reward.kind) or (reward.objectId ~= nil and not id(reward.objectId)) then
+    return nil
+  end
+  if reward.claims ~= nil and not unique(reward.claims, function(claim)
+    if type(claim) == "table" and seat(claim.playerId) and claimStates[claim.state]
+      and (not participants or participants[claim.playerId])
+      and (claim.choice == nil or claim.state == "consumed" and name(claim.choice)) then
+      return claim.playerId
+    end
+  end) then
+    return nil
+  end
+  return reward.id
+end
+
+function Room.valid(room)
+  if type(room) ~= "table" or not id(room.id) or not name(room.name)
+    or type(room.exitsUnlocked) ~= "boolean" or type(room.leaving) ~= "boolean" then
+    return false
+  end
+  local encounter = room.encounter
+  if encounter ~= nil and (type(encounter) ~= "table" or not id(encounter.id)
+    or not name(encounter.name) or type(encounter.completed) ~= "boolean") then
+    return false
+  end
+  local participants = unique(room.participants, seat)
+  if room.participants ~= nil and not participants then
+    return false
+  end
+  return unique(room.exits, exitId) ~= nil and (room.rewards == nil or unique(room.rewards, function(reward)
+    return rewardId(reward, participants)
+  end) ~= nil)
+end
+
+return Room

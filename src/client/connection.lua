@@ -1,5 +1,6 @@
 local Input = import("client/input.lua")
 local Messages = import("protocol/messages.lua")
+local Room = import("protocol/room.lua")
 local Session = import("protocol/session.lua")
 local Tcp = import("net/tcp.lua")
 
@@ -56,9 +57,16 @@ function Client:accept(msg)
     return false
   end
   if msg.t == "snap" and Messages.validTick(msg.tick)
-    and records(msg.heroes, "id", "number") and records(msg.enemies, "id", "number") then
+    and records(msg.heroes, "id", "number") and records(msg.enemies, "id", "number")
+    and (msg.room == nil or Room.valid(msg.room)) then
     if self.snapshot and msg.tick <= self.tick then
       return nil
+    end
+    if msg.room then
+      if self.roomId and msg.room.id < self.roomId then
+        return nil
+      end
+      self.roomId = msg.room.id
     end
     -- One complete view replaces the previous one, including absent actors.
     self.tick, self.snapshot = msg.tick, msg

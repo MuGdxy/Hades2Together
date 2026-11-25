@@ -20,6 +20,8 @@ python tests/net_smoke.py --lua texlua
 
 各测试客户端从自己的命令行参数取输入。测试权威使用 `hack/fake.lua` 和显式的伤害、移除、动作状态夹具。这个路径只验证传输、会话和状态投影，无需启动游戏或安装插件。正式游戏验证还需要原生输入采集、权威角色绑定和提交、实际状态读取与客户端呈现。
 
+房间切换和逐席原版奖励的快照契约使用单独的 `--stock-room` 夹具。见 [房间通行与原版奖励](room-rewards.md)。
+
 ## 接入约定
 
 - `Server.listen(socket, port, engine, options)` 创建专用权威；设置 `port=0` 可由系统分配端口，然后读取 `server:port()`。初始化期间使用 `server:poll()` 完成入席，准备好后由调用方按权威 tick 调用 `server:step()`。
