@@ -178,6 +178,7 @@ return function(root, test, eq)
     eq(mod.inputs[1].frame.t, "in")
     eq(mod.inputs[1].frame.playerId, 2)
     eq(mod.inputs[1].frame.tick, 1)
+    eq(mod.inputs[1].frame.seq, 1)
     eq(mod.inputs[2].frame.moveX, 1)
     eq(mod.inputs[2].frame.moveY, 0)
 
@@ -202,6 +203,7 @@ return function(root, test, eq)
     assert(updated:find("OK rejoined 2 Guest", 1, true), updated)
     eq(#mod.inputs, 3)
     eq(mod.inputs[3].frame.tick, 3)
+    eq(mod.inputs[3].frame.seq, 3)
     eq(mod.inputs[3].frame.moveX, 0)
     eq(mod.inputs[3].frame.moveY, -1)
     eq(mod.polls, 3)
@@ -215,16 +217,69 @@ return function(root, test, eq)
     eq(#mod.warnings, 0)
   end)
 
+  test("CLI sends validated held samples and release through the playback input contract", function()
+    local mod = mockLoader(root)
+    mod.game.CurrentRun = { CurrentRoom = { Name = "F_Combat01" }, Hero = { ObjectId = 99 } }
+    local source = readSource(root, "hack/game.lua")
+    mod.edits["hack/game.lua"] = source:gsub("function Game:PushInput%(playerId%).-\nend",
+      "function Game:PushInput(playerId, frame)\n  return captureInput(playerId, frame)\nend")
+    mod:reload()
+    mod:queue(table.concat({
+      "help",
+      "input 1 -0.5 1 Attack1 Rush Attack1",
+      "input 1 0 0",
+      "input 1 0 0 SpawnObstacle",
+      "input 1 0 0 256",
+      "input 1 \rinput 1 0 0 Attack1",
+      "input 1 1.1 0 Attack2",
+      "input 1 0",
+      "input 5 0 0",
+      "input 2 0 0",
+    }, "\r\n"))
+    local report = mod:poll(0)
+    assert(report:find("V1 actions: Attack1 Attack2 Attack3 Rush Use Shout Select Cancel", 1, true), report)
+    assert(report:find("ERR unknown input action SpawnObstacle", 1, true), report)
+    assert(report:find("ERR unknown input action 256", 1, true), report)
+    assert(report:find("ERR expected one command per line", 1, true), report)
+    assert(report:find("ERR input axes must be numbers in [-1,1]", 1, true), report)
+    assert(report:find("ERR input seat must be 1-4", 1, true), report)
+    assert(report:find("ERR input seat 2 is disconnected", 1, true), report)
+    eq(#mod.inputs, 2)
+    local held, release = mod.inputs[1].frame, mod.inputs[2].frame
+    eq(held.t, "in")
+    eq(held.tick, 1)
+    eq(held.playerId, 1)
+    eq(held.seq, 1)
+    eq(held.moveX, -0.5)
+    eq(held.moveY, 1)
+    eq(held.aimX, 0)
+    eq(held.aimY, 0)
+    eq(held.buttons, 9)
+    eq(release.buttons, 0)
+    eq(release.seq, 2)
+    mod:setInputs("1 2 0 1\n1 0 1 1\n")
+    mod:queue("play\n")
+    mod:poll(0.03125)
+    eq(#mod.inputs, 3)
+    local playback = mod.inputs[3].frame
+    eq(playback.tick, 2)
+    eq(playback.seq, 3)
+    eq(playback.moveX, 0)
+    eq(playback.moveY, 1)
+    eq(playback.buttons, 0)
+  end)
+
   test("live CLI playback refuses unsupported seats without spawning or moving actors", function()
     local mod = mockLoader(root)
     mod.game.CurrentRun = { CurrentRoom = { Name = "F_Combat01" }, Hero = { ObjectId = 99 } }
     mod.locations[99] = { X = 12, Y = 34 }
     mod:setInputs("1 1 0 1\n2 0 1 1\n")
     mod:reload()
-    mod:queue("play\n")
+    mod:queue("input 1 0 0 Attack1\nplay\n")
     local unsupported = mod:poll(0)
     assert(unsupported:find("hero=99:x=12:y=34", 1, true), unsupported)
     assert(unsupported:find("play=unsupported the retail Lua API cannot submit native player movement", 1, true), unsupported)
+    assert(unsupported:find("ERR input unsupported the retail Lua API cannot submit native player movement", 1, true), unsupported)
     assert(unsupported:find("2:P2:unsupported", 1, true), unsupported)
     mod:reload()
     eq(mod:poll(1), unsupported)

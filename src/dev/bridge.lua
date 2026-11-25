@@ -4,11 +4,11 @@ local Console = import("dev/console.lua")
 
 local Bridge = {}
 
-function Bridge.applyLines(console, lines)
+function Bridge.applyLines(console, lines, submitInput)
   local results = {}
   for _, line in ipairs(lines) do
     if line ~= "" then
-      results[#results + 1] = Console.execute(console, line)
+      results[#results + 1] = Console.execute(console, line, submitInput)
     end
   end
   return results
@@ -18,7 +18,7 @@ function Bridge.statusText(console)
   return Console.execute(console, "status") .. "\n" .. Console.execute(console, "players") .. "\n"
 end
 
-function Bridge.sync(console, commandsPath)
+function Bridge.sync(console, commandsPath, submitInput)
   local lines = {}
   local taken = commandsPath .. ".take"
   if os.rename(commandsPath, taken) then
@@ -27,14 +27,15 @@ function Bridge.sync(console, commandsPath)
       local text = file:read("*a") or ""
       file:close()
       os.remove(taken)
-      for line in (text .. "\n"):gmatch("([^\r\n]*)\r?\n") do
+      for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+        line = line:gsub("\r$", "")
         if line ~= "" then
           lines[#lines + 1] = line
         end
       end
     end
   end
-  return Bridge.applyLines(console, lines)
+  return Bridge.applyLines(console, lines, submitInput)
 end
 
 return Bridge

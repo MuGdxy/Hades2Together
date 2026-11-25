@@ -22,6 +22,8 @@
 
 `h2t.ps1 status` 显示最近一批命令的确认。看到 `queue=waiting for game update` 时，队列文件仍在等待游戏处理。最后一行的 `hero=absent` 表示游戏里还没有可用的英雄。实际地图由游戏的 `CurrentRun` 提供，英雄的 `x`、`y` 由引擎的 `GetLocation` 提供。`2:Fake1:unsupported` 表示席位已加入，但没有可用的原生玩家输入槽。
 
+单次按住状态通过 `h2t.ps1 input` 提交。用法、动作列表和当前的原生执行限制见 [玩家输入](input.md)。
+
 `player add` 不写名字时，名字从 `Fake1` 开始递增。本地玩家启动时占 1 号席，名字来自 `playerName`。
 
 `enter` 默认请求 `F_Test`，也接受 `enter F_Combat01`。游戏处理请求时会检查地图文件和 `/AllowSaveLoad=false`。已经在请求的房间时，`enter=ready` 会确认房间和英雄，无需再次加载。Steam v1.143476 没有 `F_Test.map_text`，因此请使用 `F_Combat01`。原因见 [当前卡点](blockers.md)。

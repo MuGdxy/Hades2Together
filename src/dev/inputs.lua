@@ -4,7 +4,8 @@
 
 local Inputs = {}
 
-local MAX_SLOT = 4
+local Messages = import("protocol/messages.lua")
+local MAX_SLOT = import("protocol/session.lua").MAX_PLAYERS
 
 function Inputs.parse(text)
   local names = {}
@@ -29,7 +30,8 @@ function Inputs.parse(text)
         local mx = tonumber(mxText)
         local my = tonumber(myText)
         local dur = tonumber(durText)
-        if slot and steps[slot] and mx and my and dur and dur > 0 then
+        if slot and steps[slot] and Messages.validAxis(mx) and Messages.validAxis(my)
+            and dur and dur > 0 and dur < math.huge then
           local list = steps[slot]
           list[#list + 1] = { mx = mx, my = my, dur = dur }
         end

@@ -1,3 +1,5 @@
+local Actions = import("protocol/actions.lua")
+
 local Messages = {}
 
 Messages.PROTOCOL = 1
@@ -13,9 +15,9 @@ function Messages.input(tick, playerId, moveX, moveY, buttons, aimX, aimY, seq)
     playerId = playerId,
     moveX = moveX,
     moveY = moveY,
-    buttons = buttons or 0,
-    aimX = aimX or 0,
-    aimY = aimY or 0,
+    buttons = buttons == nil and 0 or buttons,
+    aimX = aimX == nil and 0 or aimX,
+    aimY = aimY == nil and 0 or aimY,
     seq = seq,
   }
 end
@@ -47,7 +49,7 @@ local function integer(value, min, max)
   return type(value) == "number" and value >= min and value <= max and value % 1 == 0
 end
 
-local function axis(value)
+function Messages.validAxis(value)
   return type(value) == "number" and value >= -1 and value <= 1
 end
 
@@ -60,13 +62,26 @@ function Messages.validTick(tick)
   return integer(tick, 0, 9007199254740991)
 end
 
+local inputFields = {
+  t = true, tick = true, playerId = true, seq = true,
+  moveX = true, moveY = true, aimX = true, aimY = true, buttons = true,
+}
+
 function Messages.validInput(msg, maxPlayers)
+  if type(msg) ~= "table" or msg.t ~= "in" then
+    return false
+  end
+  for key in pairs(msg) do
+    if not inputFields[key] then
+      return false
+    end
+  end
   return integer(msg.playerId, 1, maxPlayers)
     and integer(msg.seq, 1, 9007199254740991)
     and Messages.validTick(msg.tick)
-    and axis(msg.moveX) and axis(msg.moveY)
-    and axis(msg.aimX) and axis(msg.aimY)
-    and integer(msg.buttons, 0, 4294967295)
+    and Messages.validAxis(msg.moveX) and Messages.validAxis(msg.moveY)
+    and Messages.validAxis(msg.aimX) and Messages.validAxis(msg.aimY)
+    and Actions.validMask(msg.buttons)
 end
 
 function Messages.snapshot(tick, heroes, enemies)
