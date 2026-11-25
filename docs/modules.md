@@ -13,7 +13,9 @@
 | `src/hack/game.lua` | 游戏进程 | 唯一允许调用游戏的文件。 |
 | `src/client/` | 客人 | 把本机操作收成 `Input`。 |
 | `src/dev/console.lua` | 权威 | 开发命令。只改席位，不碰游戏。 |
-| `src/hack/menu.lua` | 游戏进程 | 启动后的「多人游戏」按钮，以及本机开发端口。 |
+| `src/dev/bridge.lua` | 权威 | 执行控制页排进来的命令，并写出席位。 |
+| `src/hack/menu.lua` | 游戏进程 | 在游戏渲染时读命令队列。 |
+| `tools/h2t.ps1` | 本机 | 提供 `http://127.0.0.1:27779/`。 |
 | `src/main.lua` `ready.lua` `config.lua` | 游戏进程 | Hell2Modding 入口和角色配置。 |
 
 ## hack 接口

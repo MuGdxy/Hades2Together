@@ -25,12 +25,11 @@ if not ok then
 end
 
 local slot = Session.join(sessionOrErr, config.playerName or "Player")
-local listening = Menu.install(sessionOrErr, config.devPort)
+Menu.install(sessionOrErr)
 
 rom.log.info(string.format(
-  "[Hades2Together] menu ready, role=%s, slot=%s, devPort=%s, listening=%s",
+  "[Hades2Together] control queue ready, role=%s slot=%s page=http://127.0.0.1:%s/",
   sessionOrErr.role,
   tostring(slot),
-  tostring(config.devPort),
-  tostring(listening)
+  tostring(config.devPort)
 ))

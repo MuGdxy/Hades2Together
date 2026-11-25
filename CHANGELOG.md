@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Document the architecture, module boundaries, and the phase plan. Current work is phase 1.
-- Draw a Multiplayer button at startup and add a localhost command line for fake players.
+- Serve a localhost control page for the roster and fake players.
 
 ## 0.0.1
 
