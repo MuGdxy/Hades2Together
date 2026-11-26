@@ -43,6 +43,7 @@ inline void bind(sol::table& ns) {
     ns.set_function("h2t_active_bind", h2t_active_runtime::bind_after_neutral);
     ns.set_function("h2t_active_revoke", h2t_active_runtime::revoke_room);
     ns.set_function("h2t_active_connect", h2t_active_runtime::connect);
+    ns.set_function("h2t_active_disconnect", h2t_active_runtime::disconnect);
     ns.set_function("h2t_active_clear", h2t_active_runtime::prove_clear);
     ns.set_function("h2t_active_submit", [](std::uint64_t generation,std::uint64_t sequence,
         double x,double y,double aim_x,double aim_y,unsigned mask) {
