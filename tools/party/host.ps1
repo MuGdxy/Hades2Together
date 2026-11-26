@@ -54,12 +54,17 @@ try {
     $null = $recorder.Handle
     $game.WaitForExit()
     Record "game_exit=$($game.ExitCode)"
+    if ($game.ExitCode -eq 0) { [IO.File]::WriteAllText("$root/game-exited.ok", "0") }
 } finally {
     $env:USERPROFILE = $originalProfile
     $env:H2T_SAMPLER_SCRATCH_SHIP = $originalShip
     $env:SteamAppId = $originalApp
-    if ($observer -and !$observer.WaitForExit(2500)) { $observer.Kill(); $observer.WaitForExit() }
-    if ($observer) { Record "observer_exit=$($observer.ExitCode)" }
+    if ($observer) {
+        $forcedObserver = !$observer.WaitForExit(10000)
+        if ($forcedObserver) { $observer.Kill(); $observer.WaitForExit() }
+        Record "observer_exit=$($observer.ExitCode) forced=$forcedObserver"
+        if (Test-Path "$root/observer-result.txt") { Record ([IO.File]::ReadAllText("$root/observer-result.txt").Trim()) }
+    }
     if ($recorder) {
         if (!$recorder.HasExited) { Write-Host 'Press q in the recording console to finalize the game-window clip.' }
         $recorder.WaitForExit()
