@@ -30,7 +30,7 @@ python tests/net_smoke.py --lua texlua
 
 收到 `welcome` 后，客户端按约 20 Hz 读取本机四个方向和 `Attack1`、`Attack2` 的按住态，松开后发送零值。权威端使用该连接获配的席号，调用 CLI 共用的 `Game:SubmitInput`。协议序号在每次连接内递增，提交给原版的序号由权威端逐席分配。断线保留名册与房内角色，同名重连建立新的连接代际。
 
-客户端插件的 `public.getRemoteSnapshot()` 返回最近一份完整权威快照及当前获配席号。控制目录的 `status.txt` 在 `control=play` 下提供 `connection`、`seat`、`sentSeq`、快照 `tick`、角色及最近一次 `reason`。`sentSeq` 表示连接已发送的帧；实际原版消费序号仍以权威端角色回执为准。此版本提供快照读取，客户端场景渲染另行接入。
+客户端插件的 `public.getRemoteSnapshot()` 返回最近一份完整权威快照及当前获配席号。控制目录的 `status.txt` 在 `control=play` 下提供 `connection`、`seat`、`sentSeq`、快照 `tick`、角色及最近一次 `reason`。`sentSeq` 表示连接已发送的帧；实际原版消费序号仍以权威端角色回执为准。控制页用这份快照展示权威端报告的状态。
 
 执行 `texlua tests/run.lua` 可用 LuaSocket 回环和模拟游戏边界重放正式启动、分席、采样、回传及重连。
 
