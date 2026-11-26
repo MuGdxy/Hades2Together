@@ -32,7 +32,7 @@ struct Slots {
         if (hero_id <= 0 || !player || !handler || read<std::uint8_t>(player + 3) != 0 ||
             read<std::uint8_t>(handler + 0x0c) != 0) return {};
         const auto unit = read<Addr>(player + 0x18).value_or(0);
-        if (!unit || read<int>(unit + 0x48) != hero_id || read<Addr>(unit + 0x658) != player) return {};
+        if (!unit || read<int>(unit + 0x48) != hero_id) return {};
         return Owner{world, player, unit, handler};
     }
 };
@@ -76,7 +76,8 @@ public:
         const auto entry = read<Addr>(current.players + sizeof(Addr));
         if (!thread_) return entry == Addr{0};
         return published_ && thread_ == GetCurrentThreadId() && current == slots_ &&
-            primary == primary_ && entry == secondary_.player && assigned(current, secondary_, unit_id_) &&
+            primary == primary_ && read<Addr>(primary.unit + 0x658) == primary.player &&
+            entry == secondary_.player && assigned(current, secondary_, unit_id_) &&
             read<Addr>(secondary_.player + 0x18) == secondary_.unit;
     }
 
@@ -87,7 +88,8 @@ public:
             guest.player == host.player || guest.unit == host.unit || guest.handler == host.handler)
             return Publication::refused;
         const auto slots = Slots::current();
-        if (!slots || slots->primary(host_id) != host || !assigned(*slots, guest, id) ||
+        if (!slots || slots->primary(host_id) != host || read<Addr>(host.unit + 0x658) != host.player ||
+            !assigned(*slots, guest, id) ||
             read<Addr>(slots->players + sizeof(Addr)) != Addr{0} ||
             read<Addr>(guest.player + 0x18) != Addr{0}) return Publication::refused;
         if (!replace(guest.player + 0x18, 0, guest.unit)) return Publication::refused;
