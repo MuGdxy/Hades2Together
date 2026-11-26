@@ -9,8 +9,8 @@ Server.__index = Server
 
 local HANDSHAKE_SECONDS = 2
 
-local function listen(socket, port, session)
-  local listener, err = Tcp.listen(socket, port)
+local function listen(socket, port, session, address)
+  local listener, err = Tcp.listen(socket, port, address)
   if not listener then
     return nil, err
   end
@@ -36,6 +36,17 @@ function Server.observe(socket, port, readActors, maxPlayers)
   local server, err = listen(socket, port, Session.new("serve", maxPlayers))
   if server then
     server.readActors = readActors
+    server.tick = 0
+  end
+  return server, err
+end
+
+function Server.live(socket, port, game, address)
+  assert(Session.isAuthority(game.session), "player listener requires an authority")
+  local server, err = listen(socket, port, game.session, address)
+  if server then
+    server.game = game
+    server.readActors = function() return game:ReadActors() end
     server.tick = 0
   end
   return server, err
@@ -82,8 +93,16 @@ function Server:join(peer, message, now)
     end
   end
   peer.playerId = playerId
+  peer.slot = self.session.slots[playerId]
+  peer.generation = peer.slot.connectionGeneration or 1
   local maxPlayers = Session.capacity(self.session)
   reply(peer, Messages.welcome(playerId, maxPlayers ~= Session.MAX_PLAYERS and maxPlayers or nil))
+end
+
+local function ownsSeat(server, peer)
+  local slot = server.session.slots[peer.playerId]
+  return slot and slot == peer.slot and slot.connected
+    and (slot.connectionGeneration or 1) == peer.generation
 end
 
 local function acceptInput(peer, msg, maxPlayers)
@@ -132,6 +151,9 @@ function Server:poll()
   local active = {}
   for _, peer in ipairs(self.peers) do
     local stream = peer.stream
+    if peer.playerId and not ownsSeat(self, peer) then
+      stream:close("seat disconnected")
+    end
     if not peer.playerId and not stream.closing and now >= peer.joinedBy then
       refuse(peer, "hello timeout", now)
     end
@@ -141,7 +163,7 @@ function Server:poll()
       end
       if not peer.playerId then
         self:join(peer, item.msg, now)
-      elseif self.readActors then
+      elseif self.readActors and not self.game then
         reject(peer, "observer connection is read-only")
       else
         acceptInput(peer, item.msg, maxPlayers)
@@ -153,7 +175,7 @@ function Server:poll()
     end
     if stream.closed then
       -- Unapplied input belongs to the closed connection, not its reserved seat.
-      if peer.playerId then
+      if ownsSeat(self, peer) then
         Session.release(self.session, peer.playerId)
       end
     else
@@ -177,13 +199,24 @@ local function solve(server)
 end
 
 -- Poll alone during setup. Begin stepping when the authority starts the encounter.
-function Server:step()
+function Server:step(inputTick)
   local ok, err = self:poll()
   if not ok then
     return nil, err
   end
+  if self.game and #self.peers == 0 then return { commands = {} } end
   local result
   if self.readActors then
+    if self.game then
+      for _, peer in ipairs(self.peers) do
+        local inputs = peer.inputs
+        peer.inputs = {}
+        for _, input in ipairs(inputs) do
+          local accepted, reason = self.game:SubmitInput(inputTick or self.tick + 1, peer.playerId, input)
+          if not accepted then reject(peer, reason) end
+        end
+      end
+    end
     local actors = self.readActors()
     assert(actors.room == nil or Room.valid(actors.room, Session.capacity(self.session)),
       "invalid observed room projection")
@@ -215,7 +248,7 @@ function Server:close()
   end
   for _, peer in ipairs(self.peers) do
     peer.stream:close()
-    if peer.playerId then
+    if ownsSeat(self, peer) then
       Session.release(self.session, peer.playerId)
     end
   end

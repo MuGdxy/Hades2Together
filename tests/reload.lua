@@ -9,6 +9,7 @@ local function mockLoader(root)
   local mock = { edits = {}, frames = {}, imports = {}, maps = {}, warnings = {},
     info = {}, polls = 0, clock = 0, entered = {}, inputs = {}, forbiddenCalls = {},
     locations = {}, threads = {}, allowSave = false }
+  mock.edits["config.lua"] = readSource(root, "config.lua"):gsub("playerPort = 27780", "playerPort = false")
   local controlPath = "mock-home\\Hades2Together\\"
   local commandsPath = controlPath .. "commands.txt"
   local statusPath = controlPath .. "status.txt"
@@ -112,6 +113,7 @@ local function mockLoader(root)
     },
   }
   mock.rom = public.rom
+  mock.public = public
   public.io = { open = function(path, mode)
     if path == statusPath and mode == "wb" and mock.statusError then
       error(mock.statusError, 0)
@@ -200,6 +202,96 @@ local function mockLoader(root)
 end
 
 return function(root, test, eq)
+  local hasSocket, socket = pcall(require, "socket")
+  if hasSocket then
+    test("play samples reach the assigned live CLI seat over TCP and receive authoritative snapshots", function()
+      local host, guest = mockLoader(root), mockLoader(root)
+      host.edits["config.lua"] = 'return {role="serve", playerPort=0}'
+      host.edits["hack/game.lua"] = readSource(root, "hack/game.lua")
+        :gsub("function Game:PushInput%(playerId, frame%).-\nend",
+          "function Game:PushInput(playerId, frame) captureObservedGame(self); return captureInput(playerId, frame) end")
+      host.game.CurrentRun = { Hero = { ObjectId = 40000, Health = 17, MaxHealth = 30 },
+        CurrentRoom = { Name = "F_Combat01" } }
+      host.game.GetName = function() return "_PlayerUnit" end
+      host.game.IsAlive = function() return true end
+      host.game.SessionState = { MapLoads = 1 }
+      local actor = { ObjectId = 82, Health = 24, MaxHealth = 30 }
+      host.rom.data = { h2t_guest_actor = function() return { id = 82, load = 1, actor = actor } end }
+      local capture = host.public.captureInput
+      host.public.captureInput = function(seat, frame)
+        assert(seat == 2)
+        host.locations[82] = { X = frame.moveX, Y = frame.moveY }
+        return capture(seat, frame)
+      end
+      local listener
+      host.observerSocket = setmetatable({ tcp = function()
+        listener = assert(socket.tcp())
+        return listener
+      end }, { __index = socket })
+      host:reload()
+      local port = assert(table.concat(host.info, "\n"):match("player listener 127%.0%.0%.1:(%d+)"))
+      -- The normal CLI owns the first seat in this serve instance.
+      host:queue("player add Local\n")
+      host:poll(0)
+      guest.edits["config.lua"] = 'return {role="play",playerName="Remote",playerPort=' .. port .. '}'
+      local raw
+      guest.observerSocket = setmetatable({ tcp = function()
+        raw = assert(socket.tcp())
+        return raw
+      end }, { __index = socket })
+      guest.game.CurrentRun = { Hero = { ObjectId = 777 } }
+      guest.game.IsControlDown = function(args) return args.Name == "Right" or args.Name == "Attack2" end
+      guest:reload()
+      local function untilSeen(predicate)
+        local deadline = socket.gettime() + 3
+        repeat
+          local now = socket.gettime()
+          guest:poll(now)
+          host:poll(now)
+          if predicate() then return end
+          socket.sleep(0.005)
+        until socket.gettime() > deadline
+        error("network timeout: " .. table.concat(host.warnings, "/") .. " " .. tostring(guest:status()))
+      end
+      untilSeen(function()
+        local snap = guest.public.getRemoteSnapshot()
+        return snap and snap.heroes[2] and snap.heroes[2].x == 1
+      end)
+      local snapshot, seat = guest.public.getRemoteSnapshot()
+      eq(seat, 2)
+      eq(snapshot.heroes[1].id, 40000)
+      eq(snapshot.heroes[1].hp, 17)
+      eq(snapshot.heroes[2].id, 82)
+      eq(host.inputs[1].seat, seat)
+      eq(host.inputs[1].frame.moveX, 1)
+      eq(host.inputs[1].frame.buttons, 2)
+      guest.game.IsControlDown = function() return false end
+      untilSeen(function() return host.inputs[#host.inputs].frame.moveX == 0 end)
+      eq(host.inputs[#host.inputs].frame.buttons, 0)
+      local lastSeq = host.inputs[#host.inputs].frame.seq
+      local slot = host.observedGame.session.slots[seat]
+      raw:close()
+      untilSeen(function() return not slot.connected end)
+      untilSeen(function() return slot.connected and slot.connectionGeneration == 2
+        and guest.public.getRemoteSnapshot() and host.inputs[#host.inputs].seat == seat end)
+      local previous = #host.inputs
+      guest.game.IsControlDown = function(args) return args.Name == "Left" end
+      untilSeen(function() return #host.inputs > previous and host.inputs[#host.inputs].frame.moveX == -1 end)
+      eq(host.inputs[#host.inputs].seat, seat)
+      assert(host.inputs[#host.inputs].frame.seq > lastSeq)
+      assert(host.observedGame.session.slots[seat] == slot)
+      -- An old socket may already have bytes pending when the CLI replaces its generation.
+      previous = #host.inputs
+      host:queue("player remove Remote\nplayer add Remote\n")
+      untilSeen(function() return guest:status():find("connection=retrying", 1, true) end)
+      eq(#host.inputs, previous)
+      assert(slot.connected and slot.connectionGeneration == 3)
+      eq(#guest.maps, 0)
+      eq(guest.polls, 0)
+      raw:close()
+      listener:close()
+    end)
+  end
   test("observer bootstrap preserves its listener and only reads the game", function()
     local mod = mockLoader(root)
     mod.observerSocket = {}

@@ -11,6 +11,11 @@ local gameState
 local frameError
 local observerError
 local observer
+local playerServer
+local playerClient
+local playerClock
+local playerError
+local nextPlayerUpdate = 0
 local nextSnapshot = 0
 local nextObserverStatus = 0
 
@@ -31,7 +36,7 @@ local function candidateRuntime()
   local required = {
     ["hack/menu.lua"] = { "new", "pump", "publish" },
     ["hack/game.lua"] = { "new", "Install", "OnMap", "CheckEnter",
-      "Enter", "BeginPlayback", "PushInput", "UpdateInputOwner", "Step", "BodyReport" },
+      "Enter", "BeginPlayback", "PushInput", "SubmitInput", "UpdateInputOwner", "Step", "BodyReport" },
     ["dev/bridge.lua"] = { "controlRoot", "sync", "statusText" },
     ["dev/console.lua"] = { "new", "execute" },
     ["dev/inputs.lua"] = { "parse", "stick" },
@@ -46,10 +51,13 @@ local function candidateRuntime()
   assert(candidate.Game == loaded["hack/game.lua"]
     and candidate.Menu == loaded["hack/menu.lua"]
     and candidate.Session == loaded["protocol/session.lua"], "ready.lua must return Game, Menu and Session")
-  if config.observerSnapshots or config.cliSnapshots then
+  if config.observerSnapshots or config.cliSnapshots or config.playerPort then
     assert(type(candidate.Game.ReadActors) == "function", "hack/game.lua is missing ReadActors")
   end
-  if config.observerSnapshots then
+  if config.role == "play" then
+    assert(type(candidate.Game.ReadLocalInput) == "function", "hack/game.lua is missing ReadLocalInput")
+  end
+  if config.observerSnapshots or config.role == "play" then
     local ok, status = pcall(envyImport, "dev/observer_status.lua", env)
     if ok and type(status) == "table" and type(status.publish) == "function" then
       candidate.ObserverStatus = status
@@ -58,6 +66,21 @@ local function candidateRuntime()
     end
   end
   return candidate
+end
+
+local function stepPlayers()
+  local now = playerClock()
+  if now < nextPlayerUpdate then return end
+  nextPlayerUpdate = now + 0.05
+  if playerServer then
+    assert(playerServer:step(control.inputTick))
+  else
+    playerClient:step(gameState)
+    if active.ObserverStatus and now >= nextObserverStatus then
+      nextObserverStatus = now + 0.25
+      active.ObserverStatus.publish(playerClient.snapshot, playerClient)
+    end
+  end
 end
 
 local function publishObserverStatus(snapshot)
@@ -97,6 +120,13 @@ local function frame()
       rom.log.warning("[Hades2Together] snapshot sync failed: " .. tostring(err))
     end
   end
+  if playerClock then
+    local ok, reason = pcall(stepPlayers)
+    if not ok and reason ~= playerError then
+      rom.log.warning("[Hades2Together] player network failed: " .. tostring(reason))
+    end
+    playerError = not ok and reason or nil
+  end
 end
 
 local function prepare()
@@ -105,14 +135,27 @@ local function prepare()
     return candidate
   end
 
-  if config.observerSnapshots then
+  if config.observerSnapshots or config.role == "play" then
     return candidate, nil, candidate.Game.new()
   end
   local session = candidate.Session.new(config.role, config.maxPlayers)
-  local slot = candidate.Session.join(session, config.playerName or "Player")
+  local slot
+  if config.role == "serve+play" then slot = candidate.Session.join(session, config.playerName or "Player") end
   local newControl = candidate.Menu.new(session)
   local newGame = candidate.Game.new(session, slot)
   return candidate, newControl, newGame, slot
+end
+
+local function startPlayers()
+  local socket = require("socket")
+  if config.role == "play" then
+    playerClient = envyImport("client/play.lua").new(socket, config)
+    public.getRemoteSnapshot = function() return playerClient.snapshot, playerClient.seat end
+  else
+    playerServer = assert(envyImport("authority/server.lua").live(socket, config.playerPort, gameState, config.bindAddress))
+    rom.log.info("[Hades2Together] player listener " .. (config.bindAddress or "127.0.0.1") .. ":" .. playerServer:port())
+  end
+  playerClock = socket.gettime
 end
 
 local function startObserver()
@@ -144,15 +187,19 @@ function Reload.load()
     rom.gui.add_always_draw_imgui(frame)
   end
   if newGame then
-    gameState:Install()
-    if config.observerSnapshots or (config.cliSnapshots and active.Session.isAuthority(gameState.session)) then
+    if config.observerSnapshots or control then gameState:Install() end
+    if config.playerPort and not config.observerSnapshots then
+      local started, err = pcall(startPlayers)
+      if not started then rom.log.warning("[Hades2Together] player network startup failed: " .. tostring(err)) end
+    end
+    if config.observerSnapshots or (config.cliSnapshots and control) then
       local started, err = pcall(startObserver)
       if not started then
         rom.log.warning("[Hades2Together] observer startup failed: " .. tostring(err))
       end
     end
     if not control then
-      publishObserverStatus()
+      if config.observerSnapshots then publishObserverStatus() end
       return
     end
     active.Menu.publish(control, gameState, "waiting for first game update")

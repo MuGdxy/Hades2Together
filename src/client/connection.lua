@@ -7,21 +7,21 @@ local Tcp = import("net/tcp.lua")
 local Client = {}
 Client.__index = Client
 
-function Client.connect(socket, port, name)
+function Client.connect(socket, port, name, address, background)
   local hello = Messages.hello(name)
   if not Messages.validHello(hello) then
     return nil, "invalid name"
   end
-  local stream, err = Tcp.connect(socket, port)
+  local stream, err = Tcp.connect(socket, port, address, background)
   if not stream then
     return nil, err
   end
   stream:send("hello", hello)
-  stream:flush()
+  if not stream.connectBy then stream:flush() end
   if stream.closed then
     return nil, stream.closed
   end
-  return setmetatable({ transport = stream, seq = 0, tick = 0 }, Client)
+  return setmetatable({ transport = stream, socket = socket, seq = 0, tick = 0 }, Client)
 end
 
 local function records(value, key, fieldType)
@@ -81,6 +81,17 @@ function Client:accept(msg)
 end
 
 function Client:poll()
+  local stream = self.transport
+  if stream.connectBy and not stream.closed then
+    local _, writable = self.socket.select({}, { stream.socket }, 0)
+    if #writable > 0 and stream.socket:getpeername() then
+      stream.connectBy = nil
+    elseif #writable > 0 or self.socket.gettime() >= stream.connectBy then
+      stream:close("connection failed or timed out")
+    else
+      return {}
+    end
+  end
   self.transport:flush()
   local accepted = {}
   for _, item in ipairs(self.transport:drain()) do

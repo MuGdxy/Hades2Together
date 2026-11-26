@@ -24,13 +24,13 @@ function Tcp.attach(socket)
   return setmetatable({ socket = socket, incoming = "", needed = 4, outgoing = "" }, Stream)
 end
 
-function Tcp.listen(api, port)
+function Tcp.listen(api, port, address)
   local socket, err = api.tcp()
   if not socket then
     return nil, err
   end
   local ok
-  ok, err = socket:bind(Tcp.HOST, port)
+  ok, err = socket:bind(address or Tcp.HOST, port)
   if ok then
     ok, err = socket:listen()
   end
@@ -44,15 +44,20 @@ function Tcp.listen(api, port)
   return socket
 end
 
-function Tcp.connect(api, port)
+function Tcp.connect(api, port, address, background)
   local socket, err = api.tcp()
   if not socket then
     return nil, err
   end
   local ok
-  ok, err = socket:settimeout(2)
+  ok, err = socket:settimeout(background and 0 or 2)
   if ok then
-    ok, err = socket:connect(Tcp.HOST, port)
+    ok, err = socket:connect(address or Tcp.HOST, port)
+  end
+  if background and err == "timeout" then
+    local stream, failure = Tcp.attach(socket)
+    if stream then stream.connectBy = api.gettime() + 2 end
+    return stream, failure
   end
   if not ok then
     socket:close()

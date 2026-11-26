@@ -40,8 +40,13 @@ local function roomLines(lines, room)
   end
 end
 
-function ObserverStatus.format(snapshot)
+function ObserverStatus.format(snapshot, player)
   local lines = { "control=observer", "Read-only observer (one native hero)" }
+  if player then
+    lines = { "control=play", "connection=" .. player.connection, "sentSeq=" .. player.sentSeq }
+    if player.seat then lines[#lines + 1] = "seat=" .. player.seat end
+    if player.reason then lines[#lines + 1] = "reason=" .. player.reason:gsub("[%c]", " ") end
+  end
   if snapshot then
     lines[#lines + 1] = string.format("tick=%.0f", snapshot.tick)
     roomLines(lines, snapshot.room)
@@ -61,8 +66,8 @@ function ObserverStatus.format(snapshot)
   return table.concat(lines, "\n") .. "\n"
 end
 
-function ObserverStatus.publish(snapshot)
-  local text = ObserverStatus.format(snapshot)
+function ObserverStatus.publish(snapshot, player)
+  local text = ObserverStatus.format(snapshot, player)
   local report, openError = io.open(Bridge.controlRoot() .. "\\status.txt", "wb")
   if not report then
     return nil, openError
