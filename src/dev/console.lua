@@ -111,6 +111,7 @@ function Console.execute(console, line, submitInput)
   if head == "help" then
     return "OK commands: help | status | players | player add [name] | player remove <slot|name> | enter [map] | play"
       .. " | input <seat> <moveX> <moveY> [action ...]; V" .. Actions.VERSION .. " actions: " .. Actions.names()
+      .. "; player remove marks the seat offline; player add with the same name reconnects it"
   end
 
   if head == "input" then
@@ -168,8 +169,8 @@ function Console.execute(console, line, submitInput)
       return "ERR not found"
     end
     local name = session.slots[slot].name
-    Session.drop(session, slot)
-    return string.format("OK dropped %d %s", slot, name)
+    Session.release(session, slot)
+    return string.format("OK offline %d %s", slot, name)
   end
 
   return "ERR unknown command"

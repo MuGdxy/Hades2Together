@@ -82,6 +82,7 @@ if ($Command -and $Command.Count -gt 0) {
     if ($head -eq "help" -and $Command.Count -eq 1) {
         Add-ControlCommand "help"
         Write-Output "input <seat> <moveX> <moveY> [action ...]"
+        Write-Output "player remove <slot|name> marks the seat offline. Use player add <same name> to reconnect."
         Write-Output "queued help. Run h2t.ps1 status after the game polls to see the V1 action names."
         exit 0
     }

@@ -41,13 +41,16 @@ function Session.join(session, name)
   for index = 1, Session.MAX_PLAYERS do
     local slot = session.slots[index]
     if slot and slot.name == name then
+      if not slot.connected then
+        slot.connectionGeneration = (slot.connectionGeneration or 1) + 1
+      end
       slot.connected = true
       return index, "rejoined"
     end
   end
   for index = 1, Session.MAX_PLAYERS do
     if session.slots[index] == nil then
-      session.slots[index] = { name = name, connected = true }
+      session.slots[index] = { name = name, connected = true, connectionGeneration = 1 }
       return index, "joined"
     end
   end
@@ -63,7 +66,7 @@ function Session.release(session, index)
   return true
 end
 
--- Frees the seat. Used by the dev console. A disconnect uses release instead.
+-- Frees a seat when its first join fails. A disconnect uses release instead.
 function Session.drop(session, index)
   if not session.slots[index] then
     return false
