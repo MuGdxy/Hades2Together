@@ -71,7 +71,7 @@ function Get-ControlStatus {
             return $script:lastReadOnlyStatus
         }
         if ($mode -eq 'observer') {
-            return "control=observer`nRead-only observer (one native hero)`nsnapshot=waiting"
+            return "control=observer`nRead-only observer`nsnapshot=waiting"
         }
         return "control=play`nsnapshot=waiting"
     }
@@ -319,7 +319,8 @@ try {
             } elseif ($path -eq '/api/live') {
                 $status = Get-ControlStatus
                 $file = Get-Item -LiteralPath $statusPath -ErrorAction SilentlyContinue
-                $updated = if ($file) { $file.LastWriteTimeUtc.ToString('o') }
+                $updated = $null
+                if ($file) { $updated = $file.LastWriteTimeUtc.ToString('o') }
                 $body = @{ status = $status; updatedAt = $updated } | ConvertTo-Json -Compress
                 Write-Response $context 200 'application/json' $body
             } elseif ($path -eq '/api/history') {

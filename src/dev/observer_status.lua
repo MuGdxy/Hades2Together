@@ -6,7 +6,8 @@ local function actorLines(lines, label, actors)
   for _, actor in ipairs(actors) do
     local hp = tostring(actor.hp or "?") .. "/" .. tostring(actor.maxHp or "?")
     local kind = actor.kind and " kind=" .. actor.kind or ""
-    lines[#lines + 1] = label .. " id=" .. actor.id .. " hp=" .. hp .. kind
+    local position = actor.x ~= nil and actor.y ~= nil and (" x=" .. actor.x .. " y=" .. actor.y) or ""
+    lines[#lines + 1] = label .. " id=" .. actor.id .. " hp=" .. hp .. kind .. position
   end
 end
 
@@ -41,7 +42,7 @@ local function roomLines(lines, room)
 end
 
 function ObserverStatus.format(snapshot, player)
-  local lines = { "control=observer", "Read-only observer (one native hero)" }
+  local lines = { "control=observer", "Read-only observer" }
   if player then
     lines = { "control=play", "connection=" .. player.connection, "sentSeq=" .. player.sentSeq }
     if player.seat then lines[#lines + 1] = "seat=" .. player.seat end
