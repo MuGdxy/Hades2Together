@@ -111,6 +111,12 @@ python tests/net_smoke.py --lua lua --stock-room
 
 运行 `texlua tests/stock_guest_boon_source.lua "<游戏目录>/Content/Scripts" unit-grant PoseidonSpecialBoon` 可复现特技祝福的授予与回读；省略末项可复现攻击祝福。原版脚本负责稀有度加工；原生席位绑定由夹具提供。用例覆盖换绑拒绝、确认冲突回滚、同凭据重试，以及同名宿主特质保持原数量。该接口的验收止于访客持有的实例。
 
+### 同一 run 内的访客持有状态
+
+领取确认后，权威端按原版 `CurrentRun` 和名册中的玩家保存两种已支持的波塞冬祝福实例。普通换房会关闭原房机会。重建访客 Unit 时，绑定流程将已加工的特质复制到新 Unit 的私有特质表，保留实例 ID、稀有度、槽位及效果参数。离线持席使用同一流程，同房重连复用当前 Unit。原版 `StartNewRun` 创建新 run 表时，访客从空持有状态开始。宿主仍沿用原版生命周期。
+
+运行 `texlua tests/stock_guest_boon_source.lua "<游戏目录>/Content/Scripts" room-bind` 可复现离线换房、同房重连和新 run 的角色读回。原版脚本提供角色创建及特质加工，原生绑定由夹具提供。
+
 ### 访客普攻与特攻祝福的命中来源
 
 权威端沿原版 `DamageEnemy → CheckOnDamagedPowers` 处理直接命中。适配器核对 `AttackerTable`、`AttackerId` 和当前房间的原生席位绑定，依次读取攻击者自己持有的 `PoseidonWeaponBoon`（Melee）和 `PoseidonSpecialBoon`（Secondary）。每个实例的 `OnEnemyDamagedAction` 提供其武器、弹体条件和加工后的效果参数。离线期间已发出的攻击仍按角色归属处理。宿主与其法术召唤物沿用原版派发。

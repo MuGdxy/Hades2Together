@@ -127,8 +127,9 @@ local function updateSeat(game, native, seat)
     return
   end
   state.id, state.sawOwner, state.publication = result.id, true, result.publication
-  if not game:EnsureGuestActor(state) then
-    state.ready, state.reason = false, "waiting for original attached hero table"
+  local attached, reason = game:EnsureGuestActor(state)
+  if not attached then
+    state.ready, state.reason = false, reason or "waiting for original attached hero table"
     return
   end
   if not result.inputBound then

@@ -2,6 +2,7 @@
 -- guest selection and original grant side-effect replay, or "unit-grant" for
 -- the authority's actor-addressed grant.
 local scripts = assert(arg[1], "pass the installed Content/Scripts directory")
+local roomBind = arg[2] == "room-bind"
 local stock = setmetatable({
   Import = function() end, OnSpawn = function() end,
   AddIncomingDamageModifier = function() end,
@@ -32,7 +33,7 @@ local owned = { Name = "PoseidonWeaponBoon", Slot = "Melee", RestrictBoonChoices
 guest.Traits[1], guest.TraitDictionary[owned.Name] = owned, { owned }
 local loot = { Name = "PoseidonUpgrade", GodLoot = true,
   PriorityUpgrades = { owned.Name, "PoseidonSpecialBoon", "PoseidonCastBoon" } }
-if arg[2] ~= "unit-grant" then
+if arg[2] ~= "unit-grant" and not roomBind then
   assert(stock.GetTotalTraitCount(guest) == 1 and stock.GetTotalTraitCount(host) == 0)
   local countAssertion
   stock.DebugAssert = function(args) countAssertion = args.Condition end
@@ -114,7 +115,7 @@ local function makeGame()
   return game, session
 end
 
-if arg[2] == "grant" or arg[2] == "unit-grant" then
+if arg[2] == "grant" or arg[2] == "unit-grant" or roomBind then
   local weapon, special = "PoseidonWeaponBoon", "PoseidonSpecialBoon"
   local name = arg[3] or weapon
   assert(name == weapon or (arg[2] == "unit-grant" and name == special))
@@ -130,6 +131,73 @@ if arg[2] == "grant" or arg[2] == "unit-grant" then
   assert(loadfile(scripts .. "/TraitData.lua", "t", stock))()
   assert(loadfile(scripts .. "/TraitData_Poseidon.lua", "t", stock))()
   stock.TraitData[weapon].Name, stock.TraitData[special].Name = weapon, special
+  if roomBind then
+    -- Two already resolved ordinary opportunities. Only replay the grant to
+    -- replacement-Unit boundary; the native attachment is the fixture port.
+    local game, session = makeGame()
+    local slot, load = session.slots[3], game.roomLoad
+    local Boon = env.import("gameplay/boon.lua")
+    local hostTrait = { Name = weapon, StackNum = 2 }
+    host.Traits[1], host.TraitDictionary[weapon] = hostTrait, { hostTrait }
+    load.id = 1
+    local function granted(id, name, rarity)
+      load.boonOffer = { source=source, objectId=source.ObjectId, encounter=room.Encounter, id=id, encounterId=1 }
+      local reward = Adapter.reward(load)
+      reward.guests = { [3] = { slot=slot, unit=other, actorId=other.ObjectId,
+        round=1, rolls={ { rarities={ [name]=rarity } } } } }
+      assert(Boon.setOptions(session, reward, 3, other.ObjectId, { name }))
+      local selection = assert(Boon.select(session, reward, 3, other.ObjectId, name))
+      return assert(game:GrantGuestBoon(1, id, 3, selection)), selection
+    end
+    local first = granted(1, weapon, "Rare")
+    game.guestBoonHoldings = nil -- hot update with a confirmed old-version grant
+    game:OnMap(room.Name)
+    local second, oldSelection = granted(2, special, "Common")
+    assert(Session.release(session, 3))
+    local id = other.ObjectId -- intentionally reused across Worlds
+    local attached, attachments = nil, 0
+    stock.HeroData.DefaultWeapon = "WeaponStaffSwing"
+    stock.AttachLua = function(args)
+      assert(args.Id == id and not attached)
+      attached, attachments = args.Table, attachments + 1
+    end
+    native.h2t_guest_actor = function(seat)
+      assert(seat == 3)
+      return { id=id, load=stock.SessionState.MapLoads, actor=attached, empty=not attached }
+    end
+    local function bindRoom(generation)
+      local run = stock.CurrentRun
+      run.CurrentRoom = { Name="F_Combat01" }
+      stock.SessionState.MapLoads = generation
+      stock.SessionMapState = { DeferredObstacleInitializationFinished=true }
+      game:OnMap(run.CurrentRoom.Name)
+      local state = { session=session, slot=slot, seatId=3, room=run.CurrentRoom,
+        hero=run.Hero, load=generation, native=native, id=id }
+      game.guestInputs[3], attached = state, nil
+      assert(game:EnsureGuestActor(state) and game:BoundGuestUnit(3) == attached)
+      return state
+    end
+    local state = bindRoom(2)
+    assert(not slot.connected and attached ~= other and #attached.Traits == 2)
+    for index, expected in ipairs({ {weapon,"Melee","Rare",first}, {special,"Secondary","Common",second} }) do
+      local trait, old = attached.Traits[index], other.Traits[index]
+      assert(trait.Name == expected[1] and trait.Slot == expected[2] and trait.Rarity == expected[3])
+      assert(trait.Id == expected[4] and trait.StackNum == 1 and trait ~= old)
+      assert(attached.TraitDictionary[trait.Name][1] == trait and #attached.TraitDictionary[trait.Name] == 1)
+      assert(attached.SlottedTraits[trait.Slot] == trait.Name and trait.OnEnemyDamagedAction ~= old.OnEnemyDamagedAction)
+      assert(trait.OnEnemyDamagedAction.Args.DamageMultiplier == old.OnEnemyDamagedAction.Args.DamageMultiplier)
+    end
+    assert(Session.join(session, slot.name) == 3 and game:EnsureGuestActor(state))
+    assert(attachments == 1 and #attached.Traits == 2 and not game:RoomRewards())
+    local stale, why = game:GrantGuestBoon(1, 2, 3, oldSelection)
+    assert(not stale and why == "stale opportunity")
+    assert(#host.Traits == 1 and host.TraitDictionary[weapon][1] == hostTrait and hostTrait.StackNum == 2)
+    stock.CurrentRun = { Hero=stock.CreateNewHero(nil, { WeaponName=stock.HeroData.DefaultWeapon }) }
+    bindRoom(3)
+    assert(attachments == 2 and #attached.Traits == 0 and not next(attached.TraitDictionary))
+    print("room-bind: offline seat 3 retained Rare Melee and Common Secondary x1; stale opportunity refused; reconnect x1; new run empty")
+    return
+  end
   -- Keep both stock entries in the same ordinary draw for the empty third Unit.
   source.PriorityUpgrades = arg[2] == "unit-grant" and { special, weapon } or { weapon }
   stock.ScreenData.UpgradeChoice.MaxChoices = #source.PriorityUpgrades

@@ -169,6 +169,86 @@ function Stock.readOptions(game, g, load)
   return offer, false
 end
 
+local function remember(players, slot, trait)
+  players[slot] = players[slot] or {}
+  table.insert(players[slot], trait)
+end
+
+-- An upgrade can still recover confirmed receipts while their old Unit exists.
+local function confirmedHolding(game, run, seat, entry, member)
+  local state = game.guestInputs and game.guestInputs[seat]
+  local name, slot = entry.consumed, guestGrantSlots[entry.consumed]
+  if not slot or not member or not state or state.hero ~= run.Hero or state.room ~= game.roomLoad.room
+    or state.actor ~= member.unit or entry.actor ~= member.unit.ObjectId
+    or entry.slot ~= member.slot or member.slot ~= game.session.slots[seat] then return end
+  local unit = member.unit
+  local owned = unit.TraitDictionary and unit.TraitDictionary[name]
+  if not owned or not unit.SlottedTraits or unit.SlottedTraits[slot] ~= name then return end
+  for _, trait in ipairs(unit.Traits or {}) do
+    if owned[1] == trait and trait.Id == entry.instanceId and trait.Name == name
+      and trait.Rarity == entry.rarity and trait.Slot == slot then return trait end
+  end
+end
+
+-- LeaveRoom changes CurrentRun.CurrentRoom; StartNewRun creates a new CurrentRun.
+-- The reserved roster slot survives disconnects. Neither ObjectId nor the
+-- connection generation identifies the owner of a run's inventory.
+function Stock.runHoldings(game, run)
+  local held = game.guestBoonHoldings
+  if held and held.run == run and held.session == game.session then return held.players end
+  local players = {}
+  if not held and run and game.roomLoad and game.session then
+    for _, reward in ipairs(game.roomLoad.boonClaims or {}) do
+      for seat, entry in pairs(reward.seats or {}) do
+        local trait = confirmedHolding(game, run, seat, entry, reward.guests and reward.guests[seat])
+        if trait then remember(players, entry.slot, trait) end
+      end
+    end
+  end
+  game.guestBoonHoldings = { run = run, session = game.session, players = players }
+  return players
+end
+
+local function availableSlot(unit, host, name, slot, id)
+  local traits, dictionary, slots = unit.Traits, unit.TraitDictionary, unit.SlottedTraits
+  if type(traits) ~= "table" or type(dictionary) ~= "table" or (slots ~= nil and type(slots) ~= "table")
+    or traits == host.Traits or dictionary == host.TraitDictionary or (slots and slots == host.SlottedTraits) then
+    return nil, "missing private trait storage"
+  end
+  if dictionary[name] or (slots and slots[slot]) then return nil, slot:lower() .. " slot occupied" end
+  for _, owned in pairs(traits) do
+    if owned.Slot == slot or owned.Name == name or owned.Id == id then return nil, "trait conflict" end
+  end
+  return true
+end
+
+local function insertTrait(unit, trait)
+  local index = #unit.Traits + 1
+  rawset(unit.Traits, index, trait)
+  rawset(unit.TraitDictionary, trait.Name, { trait })
+  if not unit.SlottedTraits then rawset(unit, "SlottedTraits", {}) end
+  rawset(unit.SlottedTraits, trait.Slot, trait.Name)
+  return index
+end
+
+-- Only called on a fresh, still private CreateNewHero result. A conflict
+-- discards that candidate before AttachLua can publish a partially filled Unit.
+function Stock.restoreGuest(game, g, state, unit, held)
+  if state.session ~= game.session or state.slot ~= game.session.slots[state.seatId]
+    or state.hero ~= g.CurrentRun.Hero or state.room ~= g.CurrentRun.CurrentRoom then
+    return nil, "guest binding changed"
+  end
+  local restored = {}
+  for _, trait in ipairs(held) do
+    local ok, reason = availableSlot(unit, state.hero, trait.Name, trait.Slot, trait.Id)
+    if not ok then return nil, reason end
+    local copy = g.DeepCopyTable(trait)
+    insertTrait(unit, copy)
+    table.insert(restored, copy)
+  end
+  return restored
+end
+
 -- Authority-only commit of the selection issued by Game:SelectBoon. The
 -- caller supplies no actor, rarity or instance data.
 function Stock.grantGuest(game, roomId, rewardId, seat, selection)
@@ -222,37 +302,28 @@ function Stock.grantGuest(game, roomId, rewardId, seat, selection)
     return nil, "selection changed during processing"
   end
 
-  local traits, dictionary, slots = unit.Traits, unit.TraitDictionary, unit.SlottedTraits
-  local host = g.CurrentRun.Hero
-  if type(traits) ~= "table" or type(dictionary) ~= "table" or (slots ~= nil and type(slots) ~= "table")
-    or traits == host.Traits or dictionary == host.TraitDictionary or (slots and slots == host.SlottedTraits) then
-    return nil, "missing private trait storage"
-  end
-  if dictionary[name] or (slots and slots[slot]) then return nil, slot:lower() .. " slot occupied" end
   local id = table.concat({ "h2t", roomId, rewardId, seat, unit.ObjectId }, "/")
-  for _, owned in pairs(traits) do
-    if owned.Slot == slot or owned.Name == name or owned.Id == id then return nil, "trait conflict" end
-  end
+  local available, reason = availableSlot(unit, g.CurrentRun.Hero, name, slot, id)
+  if not available then return nil, reason end
+  local players = Stock.runHoldings(game, g.CurrentRun)
+  local slots = unit.SlottedTraits
   -- These are the attached Unit's Lua tables. Finish all stock calls before
   -- publishing into them; preserve the table identities used by other readers.
-  local index, bySlot = #traits + 1, slots or {}
   trait.Id, trait.SourceName = id, offer.source.Name
-  rawset(traits, index, trait)
-  rawset(dictionary, name, { trait })
-  rawset(bySlot, slot, name)
-  if not slots then rawset(unit, "SlottedTraits", bySlot) end
+  local index = insertTrait(unit, trait)
   local added = unit.Traits[index]
   if added == trait and unit.TraitDictionary[name][1] == added and unit.SlottedTraits[slot] == name
     and added.Name == name and added.Rarity == rarity and added.Id == id and added.StackNum == 1 then
     local checked, confirmed = pcall(Boon.confirm, session, reward, selection, unit.ObjectId, added.Name, added.Id)
     if checked and confirmed then
       entry.grantedSelection, entry.rarity = selection, added.Rarity
+      remember(players, member.slot, added)
       return added.Id
     end
   end
-  rawset(traits, index, nil)
-  rawset(dictionary, name, nil)
-  rawset(bySlot, slot, nil)
+  rawset(unit.Traits, index, nil)
+  rawset(unit.TraitDictionary, name, nil)
+  rawset(unit.SlottedTraits, slot, nil)
   if not slots then rawset(unit, "SlottedTraits", nil) end
   return nil, "grant not confirmed"
 end

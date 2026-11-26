@@ -491,7 +491,7 @@ end
 -- CreateNewHero's explicit weapon argument initializes this table locally.
 function Game:EnsureGuestActor(state)
   local binding = GuestInput.actor(state.native, state.seatId)
-  if binding.id ~= state.id or binding.load ~= state.load then return false end
+  if not binding or binding.id ~= state.id or binding.load ~= state.load then return false end
   if binding.empty and not state.attachAttempted then
     local g = rom.game
     if type(g.HeroData) ~= "table" or not stockName(g.HeroData.DefaultWeapon) then return false end
@@ -499,15 +499,28 @@ function Game:EnsureGuestActor(state)
     local actor = g.CreateNewHero(nil, { WeaponName = g.HeroData.DefaultWeapon })
     if type(actor) ~= "table" or actor.ObjectId ~= nil or actor == state.hero then return false end
     actor.ObjectId = state.id
+    local players = StockBoon.runHoldings(self, g.CurrentRun)
+    local restored, reason
+    if players[state.slot] then
+      restored, reason = StockBoon.restoreGuest(self, g, state, actor, players[state.slot])
+      if not restored then
+        state.attachError = "guest boon restore: " .. reason
+        return false, state.attachError
+      end
+    end
     g.AttachLua({ Id = state.id, Table = actor })
     binding = GuestInput.actor(state.native, state.seatId)
-    if binding.actor ~= actor then return false end
+    if not binding or binding.actor ~= actor or binding.id ~= state.id or binding.load ~= state.load then return false end
     state.actor = actor
+    if restored then players[state.slot] = restored end
   end
-  return state.actor ~= nil and binding.actor == state.actor and binding.actor.ObjectId == state.id
+  return state.actor ~= nil and binding.actor == state.actor and binding.actor.ObjectId == state.id, state.attachError
 end
 
 function Game:UpdateInputOwner()
+  if not self.guestBoonHoldings and self.roomLoad and self.roomLoad.boonClaims then
+    StockBoon.runHoldings(self, rom.game.CurrentRun)
+  end
   HostInput.update(self, rom.data)
   GuestInput.update(self, rom.data)
 end
@@ -733,6 +746,7 @@ function Game:OnMap(name)
   self.map = name
   local game = rom.game
   local run, session, mapState = game.CurrentRun, game.SessionState, game.SessionMapState
+  StockBoon.runHoldings(self, run)
   local room = type(run) == "table" and run.CurrentRoom
   local generation = type(session) == "table" and session.MapLoads
   local owner = self.hostInput
