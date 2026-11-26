@@ -29,15 +29,16 @@ local function syncConnection(state, slot)
     state.token, state.lastToken = state.load, state.load
     state.connectionGeneration = 1
   end
-  if state.token and (not slot.connected or generation ~= state.connectionGeneration) then
+  local eligible = slot.connected and not state.hero.IsDead
+  if state.token and (not eligible or generation ~= state.connectionGeneration) then
     local disconnect = state.native.h2t_active_disconnect
     if not disconnect or not disconnect(state.token) then return false end
     state.token, state.applied = nil, nil
   end
   state.connectionGeneration = generation
   if not state.bound then return true end
-  if not slot.connected then
-    state.phase = "offline"
+  if not eligible then
+    state.phase = slot.connected and "host actor unavailable" or "offline"
   elseif not state.token then
     -- Native tokens never repeat for this owner, including legacy bindings.
     local token = math.max(generation, (state.lastToken or 0) + 1)
@@ -123,7 +124,7 @@ function Host.update(game, native)
       Host.revoke(game, "native host bind or connect refused")
       return
     end
-    if not state.token then state.phase = "offline" end
+
   end
 end
 

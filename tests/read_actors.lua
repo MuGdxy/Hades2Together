@@ -145,7 +145,16 @@ do
   assert(not send())
   clear = true
   update()
+  hero.IsDead = true
+  local hostDisconnects = 0
+  controller.hostInput = { slot=session.slots[1], room=game.CurrentRun.CurrentRoom,
+    hero=hero, id=hero.ObjectId, load=7, bound=true, connectionGeneration=1, lastToken=1, token=1,
+    native={ h2t_active_disconnect=function() hostDisconnects=hostDisconnects+1 return true end } }
+  controller:Step(0, 2)
+  assert(hostDisconnects == 1 and controller.hostInput.phase == "host actor unavailable"
+    and controller.hostInput.bound and not controller.hostInput.failure)
   assert(send() and controller:BindHero(2) == 900)
+  hero.IsDead = nil
   assert(table.concat(calls, ",") == "+1,-1,+2,-2,+3")
   environment.rom.data, game.SessionState = nil, nil
 end

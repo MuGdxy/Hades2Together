@@ -3,20 +3,25 @@ local Guest = {}
 
 local function sync(state, slot)
   local generation = slot.connectionGeneration or 1
-  if state.token and (not slot.connected or generation ~= state.token) then
+  local eligible = state.actor and not state.actor.IsDead and slot.connected
+  if state.token and (not eligible or generation ~= state.connectionGeneration) then
     if not state.native.h2t_guest_connection(state.load, state.publication, state.token, false) then
       state.reason = "secondary disconnect pending"
       return false
     end
     state.token, state.sequence, state.ready = nil, nil, false
   end
-  if not slot.connected then state.reason = "offline" return false end
+  if not eligible then
+    state.reason = slot.connected and "secondary actor unavailable" or "offline"
+    return false
+  end
   if not state.token then
-    if not state.native.h2t_guest_connection(state.load, state.publication, generation, true) then
+    local token = math.max(generation, (state.lastToken or 0) + 1)
+    if not state.native.h2t_guest_connection(state.load, state.publication, token, true) then
       state.reason = "secondary connection refused"
       return false
     end
-    state.token, state.ready = generation, false
+    state.token, state.lastToken, state.connectionGeneration, state.ready = token, token, generation, false
   end
   if not state.ready then state.reason = "waiting for secondary neutral batch" end
   return true
@@ -26,7 +31,7 @@ function Guest.update(game, native)
   if not native or not native.h2t_guest_owner then return end
   local state = game.guestInput
   local slot = game.session and game.session.slots[2]
-  local _, room, hero, load = game:InputOwner(true)
+  local _, room, hero, load = game:InputOwner()
   if state and (state.session ~= game.session or not slot or slot ~= state.slot or load ~= state.load or room ~= state.room or hero ~= state.hero) then
     local result = native.h2t_guest_owner(0, state.load, 0, false, 0)
     state.ready, state.sequence, state.id = false, nil, nil

@@ -298,14 +298,14 @@ function Game:PushInput(playerId, frame)
   return HostInput.submit(self, frame)
 end
 
-function Game:InputOwner(keepDead)
+function Game:InputOwner()
   if not self.session or not Session.isAuthority(self.session) then return end
   local g = rom.game
   local run = g.CurrentRun
   local hero, room = run and run.Hero, run and run.CurrentRoom
   local load = g.SessionState and g.SessionState.MapLoads
   local slot = self.session.slots[1]
-  if slot and room and not room.Leaving and hero and (keepDead or not hero.IsDead)
+  if slot and room and not room.Leaving and hero
       and type(hero.ObjectId) == "number" and hero.ObjectId > 0
       and stockId(load) then
     local ok, allowSave = gameCall("GetConfigOptionValue", { Name = "AllowSaveLoad" })
