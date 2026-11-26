@@ -64,6 +64,13 @@ end
 
 function Host.update(game, native)
   local state = game.hostInput
+  if state and state.failure and native and native.h2t_sampler_resume then
+    local slot, room, hero, load = game:InputOwner()
+    if slot and (load ~= state.load or room ~= state.room or hero ~= state.hero) then
+      game.hostLastToken = state.lastToken or game.hostLastToken
+      game.hostInput, state = nil, nil
+    end
+  end
   if not state then
     if not native or not native.h2t_active_submit then return end
     for _, key in ipairs(required) do
@@ -73,9 +80,9 @@ function Host.update(game, native)
       end
     end
     local slot, room, hero, load = game:InputOwner()
-    if not slot or not slot.connected then return end
+    if not slot or (not slot.connected and not native.h2t_guest_owner) then return end
     state = { native = native, phase = "waiting for empty pad lane", slot = slot,
-      room = room, hero = hero, id = hero.ObjectId, load = load }
+      room = room, hero = hero, id = hero.ObjectId, load = load, lastToken = game.hostLastToken }
     game.hostInput = state
     local installed = native.h2t_sampler_install()
     if installed ~= "ready" then
@@ -97,7 +104,6 @@ function Host.update(game, native)
     return
   end
 
-  if not state.slot.connected then return end
   local trace = native.h2t_sampler_observe(state.id)
   if state.phase == "waiting for empty pad lane" and trace.outcome == "zero_pads" then
     local armed = native.h2t_sampler_arm(state.id)
@@ -105,6 +111,9 @@ function Host.update(game, native)
       Host.revoke(game, "virtual pad " .. tostring(armed))
       return
     end
+    state.phase = "waiting for stock pad recognition"
+  elseif state.phase == "waiting for empty pad lane" and trace.outcome == "complete"
+      and native.h2t_sampler_resume and native.h2t_sampler_resume(state.id) then
     state.phase = "waiting for stock pad recognition"
   elseif state.phase == "waiting for stock pad recognition" and trace.outcome == "complete"
       and trace.owner_same and trace.stock_same and trace.direct_neutral
@@ -114,7 +123,7 @@ function Host.update(game, native)
       Host.revoke(game, "native host bind or connect refused")
       return
     end
-    state.phase = "waiting for neutral batch"
+    if not state.token then state.phase = "offline" end
   end
 end
 

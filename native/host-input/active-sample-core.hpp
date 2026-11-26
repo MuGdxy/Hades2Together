@@ -22,12 +22,12 @@ struct Owner {
 struct Proof {
     Owner owner{};
     unsigned pad_count{};
-    bool attached_virtual_neutral{}, mapping{};
+    bool attached_virtual_neutral{}, mapping{}, managed_pair{};
     bool valid() const noexcept {
         const auto& p = owner;
-        return pad_count==1 && attached_virtual_neutral && mapping && p.world && p.player && p.unit &&
+        return ((pad_count==1 && p.player_slot==0) || (pad_count==2 && managed_pair && p.player_slot<2)) && attached_virtual_neutral && mapping && p.world && p.player && p.unit &&
             p.handler && p.stock_pad && p.sdl_pad && p.joystick && p.hero>0 && p.instance>=0 &&
-            p.player_slot==0 && p.handler_index==0 && p.input_lane==0 && p.model==2 && p.room_epoch;
+            p.handler_index==p.player_slot && p.input_lane==p.player_slot && p.model==2 && p.room_epoch;
     }
 };
 struct Frame { double x{},y{},aim_x{},aim_y{}; unsigned buttons{}; };
@@ -190,6 +190,13 @@ public:
         if (!on(t) || opened_ || !owner_ || epoch!=owner_->room_epoch) return false;
         invalidate();
         owner_.reset();
+        return true;
+    }
+    bool close_room(unsigned t,std::uint64_t epoch) noexcept {
+        if (!on(t) || opened_ || !epoch || (owner_ && owner_->room_epoch!=epoch)) return false;
+        invalidate();
+        owner_.reset();
+        latest_={};
         return true;
     }
     Audit audit(unsigned t) const noexcept { return on(t) ? latest_ : Audit{}; }

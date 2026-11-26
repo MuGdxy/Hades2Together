@@ -60,6 +60,96 @@ assert(first.enemies[1].id == 12 and first.enemies[1].kind == "Brawler")
 assert(first.enemies[1].x == 12.5 and first.enemies[1].y == -2 and first.enemies[1].hp == 6)
 assert(first.enemies[2].id == 21 and first.enemies[2].facing == nil)
 assert(first.enemies[1].action == nil and first.enemies[1].phase == nil and first.enemies[1].actionInstance == nil)
+-- A reserved guest remains a stock world actor while its connection is down.
+local guest = unit(1000002, 24, 30)
+names[guest.ObjectId], alive[guest.ObjectId] = "_PlayerUnit", true
+game.SessionState = { MapLoads = 1 }
+environment.rom.data = { h2t_guest_actor = function() return { id = guest.ObjectId, load = 1, actor = guest } end }
+capture.session.slots[2].connected = false
+local offline = capture:ReadActors()
+assert(offline.heroes[2].id == guest.ObjectId and offline.heroes[2].hp == 24)
+guest.Health = 19
+local oldLocation = game.GetLocation
+game.GetLocation = function(args)
+  if args.Id == guest.ObjectId then return { X = 11, Y = 22 } end
+  return oldLocation(args)
+end
+local later = capture:ReadActors()
+local received = assert(Codec.decode(Codec.encode(Messages.snapshot(2, later.heroes, later.enemies))))
+assert(received.heroes[2].id == guest.ObjectId and received.heroes[2].hp == 19 and received.heroes[2].x == 11)
+hero.Health = nil
+local onlyGuest = capture:ReadActors()
+local dense = assert(Codec.decode(Codec.encode(Messages.snapshot(3, onlyGuest.heroes, onlyGuest.enemies))))
+assert(#dense.heroes == 1 and dense.heroes[1].id == guest.ObjectId)
+hero.Health = 30
+capture.session.slots[2].connected = true
+assert(capture:ReadActors().heroes[2].y == 22)
+game.SessionState.MapLoads = 2
+assert(capture:ReadActors().heroes[2] == nil)
+environment.rom.data, game.SessionState, game.GetLocation = nil, nil, oldLocation
+
+-- Drive the normal Game API over a modeled published owner; the native callback
+-- replay separately exercises the original reader boundary and receipt latch.
+do
+  local Session = environment.import("protocol/session.lua")
+  local session = Session.new("serve+play")
+  Session.join(session, "host")
+  Session.join(session, "guest")
+  local controller = environment.import("hack/game.lua").new(session)
+  local calls, actor, clear, lastSeq = {}, nil, false, 0
+  game.SessionState = { MapLoads = 7 }
+  game.GetConfigOptionValue = function() return false end
+  game.IsInputAllowed = function() return true end
+  game.HeroData = { DefaultWeapon = "staff" }
+  game.CreateNewHero = function() return {} end
+  game.AttachLua = function(args) assert(args.Id == 900) actor = args.Table end
+  environment.rom.data = {
+    h2t_active_submit = function() error("unexpected primary sample") end,
+    h2t_guest_owner = function(id, load, _, retain)
+      assert(id == hero.ObjectId and load == 7 and retain)
+      return { id = 900, epoch = load, publication = 12, inputBound = true, sequence = lastSeq }
+    end,
+    h2t_guest_actor = function() return { id = 900, load = 7, empty = actor == nil, actor = actor } end,
+    h2t_guest_connection = function(load, pub, token, online)
+      assert(load == 7 and pub == 12)
+      calls[#calls+1] = (online and "+" or "-") .. token
+      clear = false
+      return true
+    end,
+    h2t_guest_clear = function() return clear end,
+    h2t_guest_submit = function(load, pub, token, seq)
+      assert(load == 7 and pub == 12 and token == session.slots[2].connectionGeneration)
+      lastSeq = seq
+      return true
+    end,
+  }
+  local Guest = environment.import("hack/guest_input.lua")
+  local function update() Guest.update(controller, environment.rom.data) end
+  local function send() return controller:SubmitInput(1, 2, { moveX = 0.5 }) end
+  update()
+  assert(not send())
+  clear = true
+  update()
+  assert(send())
+  Session.release(session, 2)
+  controller:Step(0, 1)
+  update()
+  assert(controller:BindHero(2) == 900 and controller.guestInput.sequence == nil and not send())
+  Session.join(session, "guest")
+  assert(not send())
+  clear = true
+  update()
+  assert(send())
+  Session.release(session, 2)
+  Session.join(session, "guest")
+  assert(not send())
+  clear = true
+  update()
+  assert(send() and controller:BindHero(2) == 900)
+  assert(table.concat(calls, ",") == "+1,-1,+2,-2,+3")
+  environment.rom.data, game.SessionState = nil, nil
+end
+
 local encoded = Codec.encode(Messages.snapshot(1, first.heroes, first.enemies))
 local restored = assert(Codec.decode(encoded))
 assert(restored.heroes[1].id == 40000 and restored.enemies[2].id == 21)

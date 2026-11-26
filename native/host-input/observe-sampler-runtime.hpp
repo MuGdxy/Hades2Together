@@ -68,6 +68,8 @@ static_assert(offsetof(Descriptor,name)==24);
 struct Sdl {
     int (*count)(){};
     int (*attach)(const Descriptor*){};
+    int (*detach)(int){};
+    void (*close)(Controller*){};
     Controller* (*open)(int){};
     Joystick* (*joystick)(Controller*){};
     int (*id)(Joystick*){};
@@ -86,6 +88,7 @@ struct Sdl {
             return dest != nullptr;
         };
         if (!(load(count,"SDL_NumJoysticks") && load(attach,"SDL_JoystickAttachVirtualEx") &&
+            load(detach,"SDL_JoystickDetachVirtual") && load(close,"SDL_GameControllerClose") &&
             load(open,"SDL_GameControllerOpen") && load(joystick,"SDL_GameControllerGetJoystick") &&
             load(id,"SDL_JoystickInstanceID") && load(device_id,"SDL_JoystickGetDeviceInstanceID") &&
             load(virtual_device,"SDL_JoystickIsVirtual") && load(attached,"SDL_GameControllerGetAttached") &&
@@ -127,13 +130,55 @@ inline int adapter_id{-1}, hero_id{};
 inline std::uint64_t arm_serial{};
 inline bool attempted{};
 
-inline bool sdl_neutral() noexcept {
-    if (!adapter_pad || !adapter_joystick || sdl.count()!=1 || !sdl.attached(adapter_pad) ||
-        sdl.device_id(0)!=adapter_id || !sdl.virtual_device(0) ||
-        sdl.joystick(adapter_pad)!=adapter_joystick || sdl.id(adapter_joystick)!=adapter_id) return false;
-    for (int n=0;n<6;++n) if (sdl.axis(adapter_pad,n)!=0) return false;
-    for (int n=0;n<21;++n) if (sdl.button(adapter_pad,n)!=0 || sdl.raw(adapter_joystick,n)!=0) return false;
+inline Controller* guest_pad{};
+inline Joystick* guest_joystick{};
+inline int guest_pad_id{-1};
+inline bool attaching_guest{};
+
+inline bool neutral_device(int lane, Controller* pad, Joystick* joystick, int id) noexcept {
+    if (!pad || !joystick || id<0 || !sdl.attached(pad) || sdl.device_id(lane)!=id ||
+        !sdl.virtual_device(lane) || sdl.joystick(pad)!=joystick || sdl.id(joystick)!=id) return false;
+    for (int n=0;n<6;++n) if (sdl.axis(pad,n)!=0) return false;
+    for (int n=0;n<21;++n) if (sdl.button(pad,n)!=0 || sdl.raw(joystick,n)!=0) return false;
     return true;
+}
+inline bool sdl_neutral() noexcept {
+    return adapter_pad && sdl.count()==(guest_pad ? 2 : 1) &&
+        neutral_device(0,adapter_pad,adapter_joystick,adapter_id) &&
+        (!guest_pad || (guest_pad!=adapter_pad && guest_pad_id!=adapter_id &&
+                        neutral_device(1,guest_pad,guest_joystick,guest_pad_id)));
+}
+inline bool add_guest_pad() noexcept {
+    if (guest_pad) return sdl_neutral();
+    if (attaching_guest || !sdl_neutral()) return false;
+    attaching_guest=true;
+    constexpr Descriptor desc{1,1,6,21,1,0x045e,0x028e,0,0x1fffff,0x3f,"H2T Seat 2"};
+    const int index=sdl.attach(&desc);
+    if (index!=1) return false;
+    const auto id=sdl.device_id(index);
+    auto pad=sdl.open(index);
+    auto joystick=pad ? sdl.joystick(pad) : nullptr;
+    if (!neutral_device(index,pad,joystick,id) || pad==adapter_pad || id==adapter_id) {
+        // Still inside the attach call's game update. The stock sampler has
+        // never received this device. Balance only our own open and attachment.
+        if (pad) sdl.close(pad);
+        if (id>=0 && id!=adapter_id && sdl.device_id(index)==id && sdl.virtual_device(index))
+            sdl.detach(index);
+        return false;
+    }
+    guest_pad=pad;
+    guest_joystick=joystick;
+    guest_pad_id=id;
+    return true;
+}
+inline bool verified_pad(Addr obj, Controller* pad, int id) noexcept {
+    return obj && pad && id>=0 && read<int>(obj+0x50)==id && read<unsigned>(obj+0x38)==2u &&
+        read<Addr>(obj+0x48)==reinterpret_cast<Addr>(pad);
+}
+inline bool managed_topology(const PadVector& vec) noexcept {
+    return sdl_neutral() && (vec.count==1 || (vec.count==2 && guest_pad &&
+        verified_pad(read<Addr>(vec.begin+8).value_or(0),guest_pad,guest_pad_id))) &&
+        verified_pad(read<Addr>(vec.begin).value_or(0),adapter_pad,adapter_id);
 }
 inline const char* arm(int hero) noexcept {
     const auto trace=latest_on_game_thread();
@@ -169,11 +214,11 @@ inline Check observe(int hero) noexcept {
     if (!out.trace.serial || !before || hero!=hero_id || out.trace.serial<=arm_serial) return out;
     const auto own=stock_owner(hero);
     out.owner_same=own && *own==*before;
-    if (!out.owner_same || out.trace.outcome!=Outcome::complete || out.trace.count!=1) return out;
+    if (!out.owner_same || out.trace.outcome!=Outcome::complete || (out.trace.count!=1 && out.trace.count!=2)) return out;
     const auto& lane=out.trace.lanes[0];
     out.instance=lane.pad.instance;
     const auto vec=stock_vector();
-    const auto stock=vec && vec->count==1 ? read<Addr>(vec->begin).value_or(0) : 0;
+    const auto stock=vec && vec->count==out.trace.count && managed_topology(*vec) ? read<Addr>(vec->begin).value_or(0) : 0;
     out.stock_same=stock && lane.pad.object==stock && lane.pad.instance==adapter_id && lane.pad.model==2 &&
         read<int>(stock+0x50)==adapter_id && read<unsigned>(stock+0x38)==2 &&
         read<Addr>(stock+0x48)==reinterpret_cast<Addr>(adapter_pad) &&

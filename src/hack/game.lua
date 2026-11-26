@@ -1,6 +1,7 @@
 -- Live game binding for the real hero and the local control queue.
 
 local Engine = import("hack/engine.lua")
+local GuestInput = import("hack/guest_input.lua")
 local HostInput = import("hack/host_input.lua")
 local Actions = import("protocol/actions.lua")
 local Input = import("client/input.lua")
@@ -55,6 +56,11 @@ end
 function Game:BindHero(playerId)
   if playerId == 1 then
     return self:HeroId()
+  elseif playerId == 2 and self.guestInput and self.guestInput.actor and rom.data and rom.data.h2t_guest_actor then
+    local bound = rom.data.h2t_guest_actor()
+    if bound.id == self.guestInput.id and bound.actor == self.guestInput.actor and bound.load == self.guestInput.load then
+      return bound.id
+    end
   end
 end
 
@@ -222,6 +228,16 @@ function Game:ReadActors()
     actors.heroes[1] = hero
   end
 
+  local native = rom.data
+  if native and native.h2t_guest_actor then
+    local guest = native.h2t_guest_actor()
+    if guest.actor and guest.actor.ObjectId == guest.id and game.SessionState
+        and guest.load == game.SessionState.MapLoads then
+      local actor = readActor(self, guest.actor)
+      if actor then actors.heroes[#actors.heroes + 1] = actor end
+    end
+  end
+
   local activeEnemies = game.ActiveEnemies
   local teamRead, teamIds = gameCall("GetIds", { Name = "EnemyTeam" })
   if type(activeEnemies) ~= "table" or not teamRead or type(teamIds) ~= "table" then
@@ -268,7 +284,8 @@ function Game:ReadLocalInput()
 end
 
 function Game:PushInput(playerId, frame)
-  if playerId ~= 1 then
+  local guest = playerId == 2 and rom and rom.data and rom.data.h2t_guest_submit
+  if playerId ~= 1 and not guest then
     return false, "seat " .. tostring(playerId) .. " has no native player input slot"
   end
   if not rom or not rom.data or not rom.data.h2t_active_submit then
@@ -277,17 +294,18 @@ function Game:PushInput(playerId, frame)
   if not Messages.validInput(frame, Session.MAX_PLAYERS) or frame.playerId ~= playerId then
     return false, "invalid input frame for host seat"
   end
+  if guest then return GuestInput.submit(self, frame) end
   return HostInput.submit(self, frame)
 end
 
-function Game:InputOwner()
+function Game:InputOwner(keepDead)
   if not self.session or not Session.isAuthority(self.session) then return end
   local g = rom.game
   local run = g.CurrentRun
   local hero, room = run and run.Hero, run and run.CurrentRoom
   local load = g.SessionState and g.SessionState.MapLoads
   local slot = self.session.slots[1]
-  if slot and room and not room.Leaving and hero and not hero.IsDead
+  if slot and room and not room.Leaving and hero and (keepDead or not hero.IsDead)
       and type(hero.ObjectId) == "number" and hero.ObjectId > 0
       and stockId(load) then
     local ok, allowSave = gameCall("GetConfigOptionValue", { Name = "AllowSaveLoad" })
@@ -300,8 +318,36 @@ function Game:InputAllowed()
   return ok and allowed == true
 end
 
+function Game:GuestSpawnPoint(hero)
+  local g = rom.game
+  local id = g.GetClosest({ Id = hero, DestinationName = "SpawnPoints", RequiredLocationUnblocked = true })
+  if type(id) == "number" and id > 0 and id ~= hero and g.IdExists({ Id = id })
+      and g.IsLocationBlocked({ Id = id, CheckUnits = true }) == false then return id end
+end
+
+-- The original Thing destructor releases its attached Lua registry reference.
+-- CreateNewHero's explicit weapon argument initializes this table locally.
+function Game:EnsureGuestActor(state)
+  local binding = state.native.h2t_guest_actor()
+  if binding.id ~= state.id or binding.load ~= state.load then return false end
+  if binding.empty and not state.attachAttempted then
+    local g = rom.game
+    if type(g.HeroData) ~= "table" or not stockName(g.HeroData.DefaultWeapon) then return false end
+    state.attachAttempted = true
+    local actor = g.CreateNewHero(nil, { WeaponName = g.HeroData.DefaultWeapon })
+    if type(actor) ~= "table" or actor.ObjectId ~= nil or actor == state.hero then return false end
+    actor.ObjectId = state.id
+    g.AttachLua({ Id = state.id, Table = actor })
+    binding = state.native.h2t_guest_actor()
+    if binding.actor ~= actor then return false end
+    state.actor = actor
+  end
+  return state.actor ~= nil and binding.actor == state.actor and binding.actor.ObjectId == state.id
+end
+
 function Game:UpdateInputOwner()
   HostInput.update(self, rom.data)
+  GuestInput.update(self, rom.data)
 end
 
 function Game:SubmitInput(tick, playerId, state)
@@ -412,6 +458,7 @@ end
 function Game:Step(dt, tick)
   -- Console commands can drop and replace the slot within a single pump.
   HostInput.checkOwner(self)
+  GuestInput.check(self)
   if not self.playing or not self.script then
     return
   end
@@ -470,20 +517,29 @@ function Game:BodyReport()
   end
   for playerId = 2, 4 do
     local slot = self.session and self.session.slots[playerId]
-    if slot and slot.connected then
-      parts[#parts + 1] = playerId .. ":" .. slot.name .. ":unsupported"
+    local guest = playerId == 2 and self.guestInput
+    if slot and guest then
+      local position = guest.id and (" id=" .. guest.id .. positionText(self, guest.id)) or ""
+      local receipt = guest.sequence and (" appliedSeq=" .. guest.sequence) or ""
+      parts[#parts + 1] = playerId .. ":" .. slot.name .. ":" .. (guest.reason or "pending") .. position .. receipt
+    elseif slot and slot.connected then
+      local pending = playerId == 2 and rom.data and rom.data.h2t_guest_owner
+      parts[#parts + 1] = playerId .. ":" .. slot.name .. (pending and ":awaiting room owner" or ":unsupported")
     end
   end
   return table.concat(parts, " ")
 end
 
 function Game:OnMap(name)
-  HostInput.revoke(self, "map loaded")
   self.map = name
   local game = rom.game
   local run, session, mapState = game.CurrentRun, game.SessionState, game.SessionMapState
   local room = type(run) == "table" and run.CurrentRoom
   local generation = type(session) == "table" and session.MapLoads
+  local owner = self.hostInput
+  if owner and (room ~= owner.room or generation ~= owner.load or run.Hero ~= owner.hero) then
+    HostInput.revoke(self, "map loaded")
+  end
   if type(room) ~= "table" or not stockName(name) or room.Name ~= name
     or not stockId(generation) or type(mapState) ~= "table" then
     self.roomLoad = nil

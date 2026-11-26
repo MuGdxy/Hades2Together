@@ -39,6 +39,96 @@ inline void bind(sol::table& ns) {
         }();
         return result;
     });
+    ns.set_function("h2t_guest_owner", [](sol::this_state lua, int host, std::uint64_t load,
+                                             int point, bool retain, std::uint64_t connection) {
+        auto out=sol::state_view(lua).create_table();
+        namespace runtime=h2t_active_runtime;
+        auto& guest=h2t_players::room_guest;
+        const auto t=GetCurrentThreadId();
+        if (!h2t_observe::latest_on_game_thread().serial) return out;
+        guest.maintain();
+        if (!retain && (!guest.epoch() || guest.epoch()==load)) {
+            runtime::release_guest_input();
+            guest.leave(load);
+        }
+        if (runtime::active_thread(t) && runtime::room_epoch==load && retain && !guest.epoch() && point>0) {
+            if (read<std::uint8_t>(game_base+0x837ebb)!=0) {
+                out["status"]="requires stock AllowControlHotSwap=false";
+                return out;
+            }
+            const auto pads=stock_vector();
+            if (runtime::route().valid() && pads && add_guest_pad()) {
+                if (pads->count!=2 || !managed_topology(*pads)) {
+                    out["status"]="waiting for original second pad"; return out;
+                }
+                guest.queue_join(host,load,point,connection);
+            }
+        }
+        if (guest.published() && guest.epoch()==load && runtime::active_thread(t)) {
+            if (!runtime::guest_bound) runtime::guest_bound=runtime::guest_input.bind(t,runtime::route(1));
+            out["id"]=guest.id();
+            out["publication"]=guest.publication();
+            out["inputBound"]=runtime::guest_bound;
+            const auto audit=runtime::guest_input.audit(t);
+            if (audit.result==h2t_active::Result::complete) out["sequence"]=audit.applied_sequence;
+        } else if (runtime::guest_bound) runtime::release_guest_input();
+        out["epoch"]=guest.epoch();
+        out["status"]=guest.status();
+        return out;
+    });
+    ns.set_function("h2t_guest_actor", [](sol::this_state script) {
+        auto out=sol::state_view(script).create_table();
+        const auto& guest=h2t_players::room_guest;
+        const auto owner=guest.owner();
+        if (!owner) return out;
+        const auto state=read<Addr>(owner->unit+0x128);
+        const auto ref=read<int>(owner->unit+0x130);
+        out["id"]=guest.id();
+        out["load"]=guest.epoch();
+        if (state==Addr{0} && ref==0) { out["empty"]=true; return out; }
+        lua_State* lua=script;
+        const int top=lua_gettop(lua);
+        lua_rawgeti(lua,LUA_REGISTRYINDEX,LUA_RIDX_MAINTHREAD);
+        const Addr main=reinterpret_cast<Addr>(lua_tothread(lua,-1));
+        lua_settop(lua,top);
+        // Read the caller's registry only for an original binding on this state
+        // or its known main thread. Never enter an unrelated or stale Lua state.
+        if (!state || !*state || (*state!=reinterpret_cast<Addr>(lua) && *state!=main) || !ref || *ref<=0)
+            return out;
+        lua_rawgeti(lua,LUA_REGISTRYINDEX,*ref);
+        if (lua_istable(lua,-1)) out["actor"]=sol::stack::get<sol::object>(lua,-1);
+        lua_settop(lua,top);
+        return out;
+    });
+    ns.set_function("h2t_guest_connection", [](std::uint64_t epoch,std::uint64_t publication,std::uint64_t token,bool online) {
+        namespace runtime=h2t_active_runtime;
+        const auto t=GetCurrentThreadId();
+        if (!runtime::active_thread(t) || !runtime::guest_bound ||
+            epoch!=h2t_players::room_guest.epoch() || publication!=h2t_players::room_guest.publication()) return false;
+        return online ? runtime::guest_input.connect(t,token) : runtime::guest_input.disconnect(t,token);
+    });
+    ns.set_function("h2t_guest_clear", [](std::uint64_t publication,std::uint64_t token) {
+        return publication==h2t_players::room_guest.publication() && h2t_active_runtime::guest_clear(token);
+    });
+    ns.set_function("h2t_guest_submit", [](std::uint64_t epoch,std::uint64_t publication,std::uint64_t token,std::uint64_t seq,
+                                           double x,double y,double aim_x,double aim_y,unsigned mask) {
+        namespace runtime=h2t_active_runtime;
+        const auto t=GetCurrentThreadId();
+        return runtime::active_thread(t) && runtime::guest_bound && epoch==h2t_players::room_guest.epoch() &&
+            publication==h2t_players::room_guest.publication() && runtime::guest_input.submit(t,token,seq,GetTickCount64(),{x,y,aim_x,aim_y,mask},runtime::route(1));
+    });
+    ns.set_function("h2t_sampler_resume", [](int hero) {
+        if (h2t_active_runtime::game_thread.load() || !adapter_pad) return false;
+        const auto trace=latest_on_game_thread();
+        const auto pads=stock_vector();
+        const auto host=stock_owner(hero);
+        if (!trace.serial || !host || !pads || trace.outcome!=Outcome::complete ||
+            trace.count!=pads->count || !managed_topology(*pads)) return false;
+        before=host;
+        hero_id=hero;
+        arm_serial=trace.serial;
+        return true;
+    });
     ns.set_function("h2t_sampler_arm", arm);
     ns.set_function("h2t_active_bind", h2t_active_runtime::bind_after_neutral);
     ns.set_function("h2t_active_revoke", h2t_active_runtime::revoke_room);
@@ -79,7 +169,7 @@ inline void bind(sol::table& ns) {
         out["outcome"]=name(result.trace.outcome);
         out["thread"]=result.trace.serial ? GetCurrentThreadId() : 0;
         out["count"]=result.trace.count;
-        if (result.trace.count==1 && result.trace.outcome==Outcome::complete) {
+        if ((result.trace.count==1 || result.trace.count==2) && result.trace.outcome==Outcome::complete) {
             const auto& lane=result.trace.lanes[0];
             out["instance"]=result.instance;
             out["model"]=lane.pad.model;
