@@ -4,6 +4,20 @@ local Boon = import("gameplay/boon.lua")
 local GuestBoon = import("hack/guest_boon.lua")
 local Session = import("protocol/session.lua")
 local Stock = {}
+local guestGrantSlots = { PoseidonWeaponBoon = "Melee", PoseidonSpecialBoon = "Secondary" }
+
+function Stock.guestGrantRound(reward, seat, option)
+  local member = reward.guests and reward.guests[seat]
+  local entry = reward.seats and reward.seats[seat]
+  if not guestGrantSlots[option] or not member or not entry or entry.slot ~= member.slot or not member.slot.connected
+    or (entry.selected and entry.selected ~= option) or (entry.consumed and entry.consumed ~= option) then return end
+  local roll = member.rolls[member.round]
+  if roll and roll.rarities and roll.rarities[option] then
+    for _, offered in ipairs(entry.options or {}) do
+      if offered == option then return member.round end
+    end
+  end
+end
 
 -- Includes an anchored offer retained from a plugin version that stored
 -- receipts only after consumption.
@@ -176,7 +190,8 @@ function Stock.grantGuest(game, roomId, rewardId, seat, selection)
   if not bound() then return nil, "guest binding changed" end
   if entry.consumed and entry.grantedSelection == selection then return entry.instanceId end
   local name = entry.selected
-  if entry.pending ~= selection or name ~= "PoseidonWeaponBoon" or Stock.current(g, load) ~= offer
+  local slot = guestGrantSlots[name]
+  if entry.pending ~= selection or not slot or Stock.current(g, load) ~= offer
     or offer.source.StackOnly or offer.source.UpgradeOnPick then
     return nil, "no matching ordinary selection"
   end
@@ -197,7 +212,7 @@ function Stock.grantGuest(game, roomId, rewardId, seat, selection)
   local ok, trait = pcall(g.GetProcessedTraitData, { Unit = unit, TraitName = name, Rarity = rarity, StackNum = 1 })
   entry.preparing = nil
   if not ok then return nil, tostring(trait) end
-  if type(trait) ~= "table" or trait.Name ~= name or trait.Rarity ~= rarity or trait.Slot ~= "Melee"
+  if type(trait) ~= "table" or trait.Name ~= name or trait.Rarity ~= rarity or trait.Slot ~= slot
     or trait.RarityMultiplier ~= level.Multiplier or trait.StackNum ~= 1 or trait.Id ~= nil or trait == definition then
     return nil, "invalid processed trait"
   end
@@ -213,10 +228,10 @@ function Stock.grantGuest(game, roomId, rewardId, seat, selection)
     or traits == host.Traits or dictionary == host.TraitDictionary or (slots and slots == host.SlottedTraits) then
     return nil, "missing private trait storage"
   end
-  if dictionary[name] or (slots and slots.Melee) then return nil, "melee slot occupied" end
+  if dictionary[name] or (slots and slots[slot]) then return nil, slot:lower() .. " slot occupied" end
   local id = table.concat({ "h2t", roomId, rewardId, seat, unit.ObjectId }, "/")
   for _, owned in pairs(traits) do
-    if owned.Slot == "Melee" or owned.Name == name or owned.Id == id then return nil, "trait conflict" end
+    if owned.Slot == slot or owned.Name == name or owned.Id == id then return nil, "trait conflict" end
   end
   -- These are the attached Unit's Lua tables. Finish all stock calls before
   -- publishing into them; preserve the table identities used by other readers.
@@ -224,10 +239,10 @@ function Stock.grantGuest(game, roomId, rewardId, seat, selection)
   trait.Id, trait.SourceName = id, offer.source.Name
   rawset(traits, index, trait)
   rawset(dictionary, name, { trait })
-  rawset(bySlot, "Melee", name)
+  rawset(bySlot, slot, name)
   if not slots then rawset(unit, "SlottedTraits", bySlot) end
   local added = unit.Traits[index]
-  if added == trait and unit.TraitDictionary[name][1] == added and unit.SlottedTraits.Melee == name
+  if added == trait and unit.TraitDictionary[name][1] == added and unit.SlottedTraits[slot] == name
     and added.Name == name and added.Rarity == rarity and added.Id == id and added.StackNum == 1 then
     local checked, confirmed = pcall(Boon.confirm, session, reward, selection, unit.ObjectId, added.Name, added.Id)
     if checked and confirmed then
@@ -237,7 +252,7 @@ function Stock.grantGuest(game, roomId, rewardId, seat, selection)
   end
   rawset(traits, index, nil)
   rawset(dictionary, name, nil)
-  rawset(bySlot, "Melee", nil)
+  rawset(bySlot, slot, nil)
   if not slots then rawset(unit, "SlottedTraits", nil) end
   return nil, "grant not confirmed"
 end

@@ -169,16 +169,19 @@ function Game:LoadedRoom(room)
   return load
 end
 
-local guestBoonName = "PoseidonWeaponBoon"
-
-local function guestCommandRound(reward, seat)
-  local member = reward.guests and reward.guests[seat]
-  local entry = reward.seats and reward.seats[seat]
-  if not member or not member.slot.connected or not entry or (entry.selected and entry.selected ~= guestBoonName) then return end
-  local roll = member.rolls[member.round]
-  if not roll.rarities or not roll.rarities[guestBoonName] then return end
-  for _, option in ipairs(entry.options or {}) do
-    if option == guestBoonName then return member.round, option end
+local function projectGuestOptions(roomId, reward, claim)
+  if claim.state == "consumed" then return end
+  for _, option in ipairs(claim.options or {}) do
+    local round = StockBoon.guestGrantRound(reward, claim.playerId, option)
+    if round then
+      if not claim.grantOptions then
+        claim.opportunity = table.concat({ roomId, reward.id, round }, "/")
+        claim.grantOptions, claim.grantOption = {}, option
+      end
+      claim.grantOptions[#claim.grantOptions + 1] = option
+      -- Existing single-option clients can still pick their original weapon boon.
+      if option == "PoseidonWeaponBoon" then claim.grantOption = option end
+    end
   end
 end
 
@@ -233,11 +236,7 @@ local function readRoom(self, game, room, rewardsOnly)
     if #claims > 0 then
       if live and live.reward == receipt then
         for _, claim in ipairs(claims) do
-          local round, option = guestCommandRound(receipt, claim.playerId)
-          if round and claim.state ~= "consumed" then
-            claim.opportunity = table.concat({ view.id, receipt.id, round }, "/")
-            claim.grantOption = option
-          end
+          projectGuestOptions(view.id, receipt, claim)
         end
       end
       local row = { id = receipt.id, kind = receipt.kind, encounterId = receipt.encounterId, claims = claims }
@@ -266,7 +265,7 @@ function Game:SelectBoon(roomId, rewardId, seat, choice, round)
   local offer = StockBoon.readOptions(self, rom.game, load)
   if not offer or offer.id ~= rewardId or not offer.reward then return nil end
   if round ~= nil then
-    if choice ~= guestBoonName or guestCommandRound(offer.reward, seat) ~= round then return nil end
+    if StockBoon.guestGrantRound(offer.reward, seat, choice) ~= round then return nil end
     local entry = offer.reward.seats and offer.reward.seats[seat]
     if entry and entry.consumed == choice then
       local member = offer.reward.guests[seat]

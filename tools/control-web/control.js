@@ -109,10 +109,12 @@ function renderBoons(claims) {
       const options = (claim.options || "").split(",").filter(Boolean);
       card.append(node("p", "候选 · " + (options.join("、") || "暂无")));
       if (claim.selected) card.append(node("p", "待确认 · " + claim.selected));
-      if (!readOnly && claim.opportunity && options.includes(claim.grantOption)) {
-        card.append(button("领取 " + claim.grantOption, () => send("boon", {
-          seat: claim.seat, opportunity: claim.opportunity, option: claim.grantOption
-        })));
+      const grantOptions = claim.grantOptions ? claim.grantOptions.split(",") : [claim.grantOption].filter(Boolean);
+      if (grantOptions.length) card.append(node("p", "可领取 · " + grantOptions.join("、")));
+      if (!readOnly && claim.opportunity) {
+        for (const option of grantOptions.filter((name) => options.includes(name))) {
+          card.append(button("领取 " + option, () => send("boon", { seat: claim.seat, opportunity: claim.opportunity, option })));
+        }
       }
     }
     return card;

@@ -130,6 +130,14 @@ function Client:close()
   self.transport:close()
 end
 
+local function offersGrant(claim, option)
+  if not claim.grantOptions then return claim.grantOption == option end
+  for _, name in ipairs(claim.grantOptions) do
+    if name == option then return true end
+  end
+  return false
+end
+
 function Client:chooseBoon(opportunity, option)
   local request = { t = "boon", opportunity = opportunity, option = option }
   if not Messages.validBoon(request) then return nil, "invalid boon request" end
@@ -137,7 +145,7 @@ function Client:chooseBoon(opportunity, option)
   if not self.playerId or not room or room.leaving then return nil, "no current room offer" end
   for _, reward in ipairs(room.rewards or {}) do
     for _, claim in ipairs(reward.claims or {}) do
-      if claim.playerId == self.playerId and claim.opportunity == opportunity and claim.grantOption == option then
+      if claim.playerId == self.playerId and claim.opportunity == opportunity and offersGrant(claim, option) then
         local ok, err = self.transport:send("boon", request)
         if not ok then return nil, err end
         self.transport:flush()

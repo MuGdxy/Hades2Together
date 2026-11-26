@@ -33,6 +33,7 @@ function Bridge.claimLines(rewards)
         .. (claim.selected and " selected=" .. claim.selected or "")
         .. (claim.options and claim.state ~= "consumed" and " options=" .. table.concat(claim.options, ",") or "")
         .. (claim.opportunity and " opportunity=" .. claim.opportunity .. " grantOption=" .. claim.grantOption or "")
+        .. (claim.grantOptions and " grantOptions=" .. table.concat(claim.grantOptions, ",") or "")
     end
   end
   return lines

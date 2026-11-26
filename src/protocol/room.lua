@@ -43,13 +43,19 @@ end
 local claimStates = { eligible = true, claiming = true, consumed = true }
 
 local function validOptions(claim, roomId, reward)
-  if claim.opportunity ~= nil or claim.grantOption ~= nil then
+  if claim.opportunity ~= nil or claim.grantOption ~= nil or claim.grantOptions ~= nil then
     local room, offer = Messages.boonScope(claim.opportunity)
     if room ~= roomId or offer ~= reward.id or not name(claim.grantOption) or claim.state == "consumed"
       or claim.options == nil or claim.selected and claim.selected ~= claim.grantOption then return false end
   end
   if claim.options == nil then return claim.selected == nil end
   local options = unique(claim.options, function(option) return name(option) and option end)
+  if options and claim.grantOptions ~= nil then
+    local grants = unique(claim.grantOptions, function(option)
+      if options[option] and (not claim.selected or option == claim.selected) then return option end
+    end)
+    if not grants or not grants[claim.grantOption] then return false end
+  end
   return options and (claim.grantOption == nil or options[claim.grantOption])
     and (claim.selected == nil or (claim.state == "claiming" and options[claim.selected]))
     and (claim.choice == nil or options[claim.choice])

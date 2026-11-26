@@ -285,6 +285,7 @@ return function(root, test, eq)
       local game = host.observedGame
       host:queue("player add Other\n")
       local option, opportunity = "PoseidonWeaponBoon", "7/2/1"
+      local special = "PoseidonSpecialBoon"
       local claim = { playerId = seat, state = "eligible", options = { option },
         opportunity = opportunity, grantOption = option }
       local other = { playerId = 3, state = "eligible", options = { option },
@@ -298,13 +299,14 @@ return function(root, test, eq)
       end
       local token, selections = {}, 0
       function game:SelectBoon(room, reward, beneficiary, choice, round)
-        assert(room == 7 and reward == 2 and round == 1 and beneficiary == seat and choice == option)
+        assert(room == 7 and reward == 2 and round == 1 and beneficiary == seat and choice == special)
         selections = selections + 1
         return token
       end
       function game:GrantGuestBoon(room, reward, beneficiary, selection)
         assert(room == 7 and reward == 2 and beneficiary == seat and selection == token)
-        claim.state, claim.choice, claim.opportunity, claim.grantOption = "consumed", option, nil, nil
+        claim.state, claim.choice = "consumed", special
+        claim.opportunity, claim.grantOption, claim.grantOptions = nil, nil, nil
         return "fixture-instance"
       end
       local function remoteClaim()
@@ -329,14 +331,17 @@ return function(root, test, eq)
       eq(#host.inputs, previous)
       eq(selections, 0)
       assert(slot.connected and slot.connectionGeneration == 3)
+      claim.options = { option, special, "PoseidonCastBoon" }
+      claim.grantOptions = { option, special }
       host:queue("player remove Remote\n")
       untilSeen(function() return slot.connectionGeneration == 4 and remoteClaim() and remoteClaim().opportunity end)
       local own = remoteClaim()
-      assert(guest.public.chooseRemoteBoon(own.opportunity, own.grantOption))
+      assert(not guest.public.chooseRemoteBoon(own.opportunity, "PoseidonCastBoon"))
+      assert(guest.public.chooseRemoteBoon(own.opportunity, own.grantOptions[2]))
       untilSeen(function() return remoteClaim() and remoteClaim().state == "consumed" end)
       eq(selections, 1)
       eq(remoteClaim().playerId, seat)
-      eq(remoteClaim().choice, option)
+      eq(remoteClaim().choice, special)
       eq(guest.public.getRemoteSnapshot().room.rewards[1].claims[2].state, "eligible")
       assert(not guest.public.chooseRemoteBoon(opportunity, option))
       eq(#guest.maps, 0)

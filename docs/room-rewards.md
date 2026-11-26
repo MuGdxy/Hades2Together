@@ -60,7 +60,7 @@ python tests/net_smoke.py --lua lua --stock-room
 
 权威层 `gameplay/boon.lua` 按一次房间奖励机会分别保存每个席位的角色、有效选项、待确认选择和实际领取结果。引擎适配层调用 `setOptions` 提供经核实的选项；`select` 校验名册、角色和该席的选项；`confirm` 需要同一机会的选择凭据、实际受益角色、特质名和实例 ID。每席对同一机会最多确认一次。原版菜单表和按钮只在 `hack/stock_boon.lua` 转换为这些数据。菜单重建不会复制或提交一次选择。
 
-当前房间的权威调用入口是 `Game:SelectBoon(roomId, rewardId, seat, choice)`。调用者从已认证的会话取得席号，入口用已绑定角色和原物件校验意图。已有有效选项时，调用无需菜单对象。快照 `room.rewards[].claims[]` 的 `options` 是该席已知的有效选项，`selected` 表示尚待引擎确认，`consumed/choice` 保留给已经落到受益角色的结果。普通访客的 `PoseidonWeaponBoon` 也可经 play 协议提交，详见 [远端输入接口](network.md#正式插件的远端输入)。
+当前房间的权威调用入口是 `Game:SelectBoon(roomId, rewardId, seat, choice)`。调用者从已认证的会话取得席号，入口用已绑定角色和原物件校验意图。已有有效选项时，调用无需菜单对象。快照 `room.rewards[].claims[]` 的 `options` 是该席已知的有效选项，`selected` 表示尚待引擎确认，`consumed/choice` 保留给已经落到受益角色的结果。访客可经 play 协议提交当前 `grantOptions` 中的一项，详见 [远端输入接口](network.md#正式插件的远端输入)。
 
 **普通候选可以在开菜单前读取。** 安装版 `CreateLoot` 调用 `SetTraitsOnLoot`，后者根据当前英雄生成 `loot.UpgradeOptions`；房间还可能用指定选项替换这张表。适配层读取当房已识别物件的最终列表，调用原版 `CalcNumLootChoices(loot)` 取得该英雄的可选数量。数量覆盖全部候选时即可向已绑定的宿主席公布普通新增特质。读取快照和提交选择均不重新抽取。见 `RoomLogic.lua:2266`、`RewardLogic.lua:376`、`TraitLogic.lua:1746–1754, 1760–2001`。
 
@@ -107,9 +107,9 @@ python tests/net_smoke.py --lua lua --stock-room
 
 聚焦复现命令为 `texlua tests/stock_guest_boon_source.lua "<游戏目录>/Content/Scripts" grant`。它用夹具绑定的第三席调用安装版授予函数，核对抽定的 Rare、共用历史的写入，以及严格调试断言触发时已经插入的访客实例。引擎的时钟、随机后缀和说明文字用的基础伤害由夹具提供。此次只验证授予边界。
 
-权威调用 `Game:GrantGuestBoon(roomId, rewardId, seat, selection)` 提交普通新增的 `PoseidonWeaponBoon`。`selection` 来自同席的 `SelectBoon`。适配层从当前轮读取稀有度，使用原版 `GetProcessedTraitData` 为已绑定 Unit 加工一层特质，按该 Unit 的 `Traits`、`TraitDictionary` 和 `SlottedTraits` 核对新实例。匹配名称、稀有度和实例 ID 后，同一条选择变为 `consumed`。函数成功返回实例 ID，失败返回 `nil, reason`。同一机会和绑定下重提成功凭据返回原 ID。共享发现历史由原版维护，个人领取记录归属于该机会的席位与角色。
+权威调用 `Game:GrantGuestBoon(roomId, rewardId, seat, selection)` 提交普通新增的 `PoseidonWeaponBoon`（`Melee`）或 `PoseidonSpecialBoon`（`Secondary`）。两者均在原版 `PoseidonUpgrade.PriorityUpgrades` 中。`grantOptions` 取当前轮候选中已抽定稀有度、可经该接口提交的子集；一份机会只确认一项。`selection` 来自同席的 `SelectBoon`。适配层从当前轮读取稀有度，使用原版 `GetProcessedTraitData` 为已绑定 Unit 加工一层特质，按该 Unit 的 `Traits`、`TraitDictionary` 和 `SlottedTraits` 核对新实例。匹配名称、稀有度和实例 ID 后，同一条选择变为 `consumed`。函数成功返回实例 ID，失败返回 `nil, reason`。同一机会和绑定下重提成功凭据返回原 ID。共享发现历史由原版维护，个人领取记录归属于该机会的席位与角色。
 
-运行 `texlua tests/stock_guest_boon_source.lua "<游戏目录>/Content/Scripts" unit-grant` 可复现授予与回读。原版脚本负责稀有度加工；原生席位绑定由夹具提供。用例覆盖换绑拒绝、确认冲突回滚、同凭据重试，以及同名宿主特质保持原数量。该接口的验收止于访客持有的实例。
+运行 `texlua tests/stock_guest_boon_source.lua "<游戏目录>/Content/Scripts" unit-grant PoseidonSpecialBoon` 可复现特技祝福的授予与回读；省略末项可复现攻击祝福。原版脚本负责稀有度加工；原生席位绑定由夹具提供。用例覆盖换绑拒绝、确认冲突回滚、同凭据重试，以及同名宿主特质保持原数量。该接口的验收止于访客持有的实例。
 
 ## 后续原版接入
 

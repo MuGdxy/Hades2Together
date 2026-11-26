@@ -115,7 +115,10 @@ local function makeGame()
 end
 
 if arg[2] == "grant" or arg[2] == "unit-grant" then
-  local name = "PoseidonWeaponBoon"
+  local weapon, special = "PoseidonWeaponBoon", "PoseidonSpecialBoon"
+  local name = arg[3] or weapon
+  assert(name == weapon or (arg[2] == "unit-grant" and name == special))
+  local slot = name == special and "Secondary" or "Melee"
   stock.TraitSetData = {}
   stock.LootData.TrialUpgrade = { PermanentTraits = {} }
   stock.ToLookup = function(names)
@@ -123,18 +126,25 @@ if arg[2] == "grant" or arg[2] == "unit-grant" then
     for _, key in ipairs(names) do keys[key] = true end
     return keys
   end
-  stock.WeaponSets = { HeroPrimaryWeapons = { "WeaponStaffSwing" }, HeroAllWeaponsAndSprint = {} }
+  assert(loadfile(scripts .. "/WeaponSets.lua", "t", stock))()
   assert(loadfile(scripts .. "/TraitData.lua", "t", stock))()
   assert(loadfile(scripts .. "/TraitData_Poseidon.lua", "t", stock))()
-  stock.TraitData[name].Name = name
-  -- One actual priority entry; deterministic opportunity for the empty third Unit.
-  source.PriorityUpgrades = { name }
-  stock.ScreenData.UpgradeChoice.MaxChoices = 1
+  stock.TraitData[weapon].Name, stock.TraitData[special].Name = weapon, special
+  -- Keep both stock entries in the same ordinary draw for the empty third Unit.
+  source.PriorityUpgrades = arg[2] == "unit-grant" and { special, weapon } or { weapon }
+  stock.ScreenData.UpgradeChoice.MaxChoices = #source.PriorityUpgrades
   stock.HeroData.BoonData.RarityChances.Rare = 1
   local game = makeGame()
-  game:ReadActors()
+  local view = game:ReadActors()
+  if arg[2] == "unit-grant" then
+    assert(env.import("protocol/room.lua").valid(view.room))
+    local claims = view.room.rewards[1].claims
+    local claim = claims[#claims]
+    assert(claim.playerId == 3 and claim.opportunity == "1/1/1" and claim.grantOption == weapon)
+    assert(table.concat(claim.grantOptions, ",") == special .. "," .. weapon)
+  end
   stock.HeroData.BoonData.RarityChances.Rare = 0
-  local token, item = game:SelectBoon(1, 1, 3, name)
+  local token, item = game:SelectBoon(1, 1, 3, name, 1)
   assert(token and item.Type == "Trait" and item.ItemName == name and item.Rarity == "Rare")
   item.Rarity = "Epic"
   local repeated, retained = game:SelectBoon(1, 1, 3, name)
@@ -144,7 +154,7 @@ if arg[2] == "grant" or arg[2] == "unit-grant" then
     local reward = game.roomLoad.boonOffer.reward
     local entry = reward.seats[3]
     stock.GameState = { TraitsTaken = {} }
-    local hostTrait = { Name = name, Slot = "Melee", Rarity = "Common", StackNum = 2, Id = "host-owned" }
+    local hostTrait = { Name = name, Slot = slot, Rarity = "Common", StackNum = 2, Id = "host-owned" }
     host.Traits[1], host.TraitDictionary[name] = hostTrait, { hostTrait }
     local function commit()
       return game:GrantGuestBoon(1, 1, 3, token)
@@ -166,8 +176,11 @@ if arg[2] == "grant" or arg[2] == "unit-grant" then
     local id = assert(commit())
     local added = assert(other.Traits[1])
     assert(added.Name == name and added.Rarity == "Rare" and added.Id == id and added ~= hostTrait)
-    assert(added.RarityMultiplier == 1.25 and added.OnEnemyDamagedAction.Args.DamageMultiplier == 1.25)
-    assert(other.TraitDictionary[name][1] == added and other.SlottedTraits.Melee == name)
+    local multiplier = name == special and 30/25 or 1.25
+    local base = name == special and 25/20 or 1
+    assert(added.RarityMultiplier == multiplier and added.OnEnemyDamagedAction.Args.DamageMultiplier == base * multiplier)
+    assert(other.TraitDictionary[name][1] == added and other.SlottedTraits[slot] == name)
+    assert(not game:ClaimGuestBoon(3, 1, 1, 1, name == special and weapon or special))
     assert(stock.GetTraitCount(other, { TraitData = added }) == 1 and stock.GetTotalTraitCount(other) == 1)
     assert(commit() == id and #other.Traits == 1 and #other.TraitDictionary[name] == 1)
     assert(not game:GrantGuestBoon(1, 1, 3, { seat = 3 }))

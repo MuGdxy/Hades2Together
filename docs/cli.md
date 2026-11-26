@@ -26,13 +26,13 @@
 
 单次按住状态通过 `h2t.ps1 input` 提交。用法、动作列表和当前的原生执行限制见 [玩家输入](input.md)。
 
-**访客祝福。** 权威本机的“祝福领取”按席显示实际候选、待确认选择和已领取结果。可提交的选项带有领取按钮。命令行从 `h2t.ps1 status` 的同一条 `claim` 记录复制 `seat`、`opportunity` 和 `grantOption`。例如，第三席获得房间 7、奖励 2、第 4 轮的机会时，可执行：
+**访客祝福。** 权威本机的“祝福领取”按席显示实际候选、待确认选择和已领取结果。可提交的选项带有领取按钮。命令行从 `h2t.ps1 status` 的同一条 `claim` 记录复制 `seat`、`opportunity`，并从 `grantOptions` 选择一项（旧状态使用 `grantOption`）。例如，第三席获得房间 7、奖励 2、第 4 轮的机会时，可执行：
 
 ```powershell
 .\tools\h2t.ps1 boon 3 7/2/4 PoseidonWeaponBoon
 ```
 
-当前支持访客普通新增的 `PoseidonWeaponBoon`。返回 `queued` 后，查看游戏回执中的 `OK boon ... instance=...` 或 `ERR boon ...`。同席记录中的 `state=consumed choice=...` 表示已确认领取。换房或重掷后请使用新机会标识。观察者和远端玩家页可查看快照里的选项与结果。
+当前支持访客普通新增的 `PoseidonWeaponBoon` 和 `PoseidonSpecialBoon`。`options` 列出本轮候选，`grantOptions` 列出其中可提交的选项。返回 `queued` 后，查看游戏回执中的 `OK boon ... instance=...` 或 `ERR boon ...`。同席记录中的 `state=consumed choice=...` 表示已确认领取。换房或重掷后请使用新机会标识。观察者和远端玩家页可查看快照里的选项与结果。
 
 启用 [只读观察模式](network.md#实机只读观察模式) 或远端玩家 `play` 模式时，`h2t.ps1 status` 与控制页显示最近完整的状态文件，控制页和本机 CLI 拒绝排队游戏操作。远端玩家页额外显示连接状态、获配席位和本机已发送序号，后者表示网络发送，与权威端的原版应用回执含义不同。
 

@@ -16,10 +16,11 @@ local Session, Game = env.import("protocol/session.lua"), env.import("hack/game.
 local Menu, Console = env.import("hack/menu.lua"), env.import("dev/console.lua")
 local session = Session.new("serve+play")
 assert(Session.join(session, "Host", 1) and Session.join(session, "Guest", 3))
-local game, name = Game.new(session, 1), "PoseidonWeaponBoon"
+local game, name = Game.new(session, 1), "PoseidonSpecialBoon"
 game:OnMap(room.Name)
 function game:BoundGuestUnit(seat) if seat == 3 then return unit end end
-local roll = { options = { name, "PoseidonCastBoon" }, rarities = { [name] = "Rare" } }
+local roll = { options = { "PoseidonWeaponBoon", name, "PoseidonCastBoon" },
+  rarities = { PoseidonWeaponBoon = "Common", [name] = "Rare", PoseidonCastBoon = "Rare" } }
 local reward = { id = 2, encounterId = 1, kind = source.Name, guests = {
   [3] = { slot = session.slots[3], unit = unit, actorId = 300, round = 4, rolls = { [4] = roll } }
 } }
@@ -52,8 +53,10 @@ local function report()
 end
 Menu.publish(control, game, "polling")
 local wireClaim = game:ReadActors().room.rewards[1].claims[1]
-assert(wireClaim.playerId == 3 and wireClaim.opportunity == "7/2/4" and wireClaim.grantOption == name)
-assert(report():find("options=PoseidonWeaponBoon,PoseidonCastBoon opportunity=7/2/4 grantOption=PoseidonWeaponBoon", 1, true))
+assert(wireClaim.playerId == 3 and wireClaim.opportunity == "7/2/4" and wireClaim.grantOption == "PoseidonWeaponBoon")
+assert(table.concat(wireClaim.grantOptions, ",") == "PoseidonWeaponBoon,PoseidonSpecialBoon")
+assert(report():find("options=PoseidonWeaponBoon,PoseidonSpecialBoon,PoseidonCastBoon opportunity=7/2/4 "
+  .. "grantOption=PoseidonWeaponBoon grantOptions=PoseidonWeaponBoon,PoseidonSpecialBoon", 1, true))
 local function pump(command)
   local file = assert(io.open(control.commandsPath, "wb"))
   file:write(command .. "\n")
