@@ -68,7 +68,7 @@ function Stock.current(g, load)
   local source, map = offer.source, g.MapState
   if source.Name == "PoseidonUpgrade" and source.ObjectId == offer.objectId
     and map and map.RoomRequiredObjects and map.RoomRequiredObjects[offer.objectId] == source
-    and map.RewardPointsUsed and map.RewardPointsUsed[load.room.SpawnRewardOnId] == offer.objectId then
+    and map.RewardPointsUsed and map.RewardPointsUsed[offer.point or load.room.SpawnRewardOnId] == offer.objectId then
     return offer
   end
 end

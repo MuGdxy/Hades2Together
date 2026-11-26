@@ -117,18 +117,24 @@ local function readExits(map)
   return exits
 end
 
-local function readAnchoredReward(game, room, encounter)
+local function readAnchoredReward(game, room, encounter, drop)
   local map = game.MapState
-  if encounter.Name ~= "HealthRestore" or not stockId(room.SpawnRewardOnId)
-    or type(map) ~= "table" or type(map.RewardPointsUsed) ~= "table"
+  local point
+  if encounter.Name == "HealthRestore" then
+    point = room.SpawnRewardOnId
+  elseif drop and drop.encounter == encounter then
+    point = drop.point
+  end
+  if not stockId(point) or type(map) ~= "table" or type(map.RewardPointsUsed) ~= "table"
     or type(map.RoomRequiredObjects) ~= "table" then
     return nil
   end
-  local id = map.RewardPointsUsed[room.SpawnRewardOnId]
+  local id = map.RewardPointsUsed[point]
   if not stockId(id) then
     return nil
   end
   local reward = map.RoomRequiredObjects[id]
+  if encounter.Name ~= "HealthRestore" and reward ~= drop.source then return end
   if type(reward) ~= "table" or reward.ObjectId ~= id
     or reward.SpawnPointId ~= nil or not stockName(reward.Name) then
     return nil
@@ -154,7 +160,7 @@ local function readAnchoredReward(game, room, encounter)
   end
   local nameRead, name = gameCall("GetName", args)
   if nameRead and name == reward.Name then
-    return reward
+    return reward, point
   end
 end
 
@@ -202,7 +208,7 @@ local function readRoom(self, game, room, rewardsOnly)
   local visibleReward
   local encounter = room.Encounter
   if type(encounter) == "table" and stockName(encounter.Name) then
-    local reward = readAnchoredReward(game, room, encounter)
+    local reward, point = readAnchoredReward(game, room, encounter, load.encounterDrop)
     local hasCompletion = type(encounter.Completed) == "boolean"
     local id = load.encounters[encounter]
     if not id and (hasCompletion or reward) then
@@ -225,7 +231,7 @@ local function readRoom(self, game, room, rewardsOnly)
       if reward.Name == "PoseidonUpgrade" and game.LootObjects and game.LootObjects[reward.ObjectId] == reward then
         if not load.boonOffer or load.boonOffer.source ~= reward or load.boonOffer.encounter ~= encounter then
           load.boonOffer = { source = reward, objectId = reward.ObjectId, encounter = encounter,
-            id = offerId, encounterId = id }
+            id = offerId, encounterId = id, point = encounter.Name ~= "HealthRestore" and point or nil }
           if firstObservation then StockBoon.openGuests(self, game, load) end
         end
       end
@@ -300,7 +306,7 @@ function Game:RoomRewards()
   local g = rom.game
   local room = g.CurrentRun and g.CurrentRun.CurrentRoom
   if not room or not ((room.Encounter and room.Encounter.Name == "HealthRestore")
-    or (self.roomLoad and self.roomLoad.boonClaims)) then return end
+    or (self.roomLoad and (self.roomLoad.encounterDrop or self.roomLoad.boonClaims))) then return end
   local view = readRoom(self, g, room, true)
   return view and view.rewards
 end
@@ -813,7 +819,41 @@ function Game:OnMap(name)
   end
 end
 
+-- A normal encounter passes itself to SpawnRoomReward. The stock function can
+-- yield. Keep only its actual registered return in the same loaded room.
+function Game:ObserveRoomReward(original, encounter, ...)
+  local g = rom.game
+  local room = g.CurrentRun and g.CurrentRun.CurrentRoom
+  local load = room and self:LoadedRoom(room)
+  if not load or not encounter or encounter ~= room.Encounter or encounter.Name == "HealthRestore" then
+    return original(encounter, ...)
+  end
+  local result = table.pack(original(encounter, ...))
+  local reward = result[1]
+  if type(reward) == "table" and reward.Name == "PoseidonUpgrade" and stockId(reward.ObjectId)
+    and g.CurrentRun and g.CurrentRun.CurrentRoom == room and self:LoadedRoom(room) == load
+    and not room.Leaving and room.Encounter == encounter and g.LootObjects and g.LootObjects[reward.ObjectId] == reward then
+    local map = g.MapState
+    if map and map.RoomRequiredObjects and map.RoomRequiredObjects[reward.ObjectId] == reward then
+      for point, id in pairs(map.RewardPointsUsed or {}) do
+        if id == reward.ObjectId and stockId(point) then
+          load.encounterDrop = { encounter = encounter, source = reward, point = point }
+          break
+        end
+      end
+    end
+  end
+  return table.unpack(result, 1, result.n)
+end
+
 function Game:Install()
+  if self.session and Session.isAuthority(self.session) and not self.roomRewardObserver then
+    local original = rom.game.SpawnRoomReward
+    if type(original) == "function" then
+      rom.game.SpawnRoomReward = function(...) return self:ObserveRoomReward(original, ...) end
+      self.roomRewardObserver = true
+    end
+  end
   if self.session and Session.isAuthority(self.session) and not self.guestSplashInstalled then
     local g = rom.game
     local original = g.CheckOnDamagedPowers

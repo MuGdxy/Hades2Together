@@ -707,4 +707,62 @@ do
   environment.rom.game = original
 end
 
+-- A combat reward is anchored by the yielding encounter call's actual return.
+-- A lookalike in the maps alone and an old call finishing after a load both fail.
+do
+  local encounter = { Name = "GeneratedF", Completed = false }
+  local room = { Name = "F_Combat02", Encounter = encounter, ChangeReward = "Boon", ForceLootName = "PoseidonUpgrade" }
+  local source = { ObjectId = 912, Name = "PoseidonUpgrade", GodLoot = true }
+  local map = { RewardPointsUsed = {}, RoomRequiredObjects = { [912] = source } }
+  local g = {
+    CurrentRun = { CurrentRoom = room, Hero = { ObjectId = 40000 } },
+    SessionState = { MapLoads = 1 }, SessionMapState = { DeferredObstacleInitializationFinished = true },
+    MapState = map, LootObjects = { [912] = source },
+    IdExists = function(id) return id.Id == 912 end, IsUseable = function(id) return id.Id == 912 end,
+    GetName = function() return source.Name end,
+    RoomData = {}, RewardData = {}, RoomRewardPreSpawnPresentation = function() end,
+    SelectRoomRewardSpawnPoint = function() return 715 end, GetAngleBetween = function() return 0 end,
+    CalcOffset = function() return { X = 0, Y = 0 } end, wait = coroutine.yield,
+    CheckBoonSkipShrineUpgrade = function() end, GiveLoot = function(args)
+      assert(args.ForceLootName == source.Name and args.SpawnPoint == 40000)
+      return source
+    end,
+    GetTotalHeroTraitValue = function() return 0 end, UseHeroTraitsWithValue = function() end,
+    RoomRewardSpawnPresentation = function() end, CheckShrineBounties = function() end, CheckRandomBounties = function() end,
+  }
+  g.CurrentRun.Hero.Traits = {}
+  if arg[1] then
+    assert(loadfile(arg[1] .. "/RewardLogic.lua", "t", setmetatable(g, { __index = _G })))()
+  else
+    g.SpawnRoomReward = function()
+      coroutine.yield()
+      map.RewardPointsUsed[40000] = source.ObjectId
+      return source
+    end
+  end
+  local originalGame = environment.rom.game
+  environment.rom.game = g
+  local adapter = environment.import("hack/game.lua").new(environment.import("protocol/session.lua").new("serve+play"), 1)
+  adapter:OnMap(room.Name)
+  adapter:Install()
+  map.RewardPointsUsed[40000] = 912
+  assert(adapter:RoomRewards() == nil)
+  local function spawn()
+    local co = coroutine.create(function() assert(g.SpawnRoomReward(encounter) == source) end)
+    assert(coroutine.resume(co))
+    assert(coroutine.status(co) == "suspended")
+    return co
+  end
+  local stale = spawn()
+  g.SessionState.MapLoads = 2
+  adapter:OnMap(room.Name)
+  assert(coroutine.resume(stale))
+  assert(adapter:RoomRewards() == nil)
+  local current = spawn()
+  assert(coroutine.resume(current))
+  local row = assert(adapter:RoomRewards()[1])
+  assert(row.objectId == source.ObjectId and row.kind == source.Name)
+  environment.rom.game = originalGame
+end
+
 print("live actor projection passed")

@@ -57,6 +57,8 @@ local function candidateRuntime()
   end
   if config.role == "play" then
     assert(type(candidate.Game.ReadLocalInput) == "function", "hack/game.lua is missing ReadLocalInput")
+    candidate.BoonMenu = env.import("client/boon_menu.lua")
+    assert(type(candidate.BoonMenu.draw) == "function", "client/boon_menu.lua is missing draw")
   end
   if config.observerSnapshots or config.role == "play" then
     local ok, status = pcall(envyImport, "dev/observer_status.lua", env)
@@ -76,7 +78,7 @@ local function stepPlayers()
   if playerServer then
     assert(playerServer:step(control.inputTick))
   else
-    playerClient:step(gameState)
+    playerClient:step(gameState, rom.gui.is_open())
     if active.ObserverStatus and now >= nextObserverStatus then
       nextObserverStatus = now + 0.25
       active.ObserverStatus.publish(playerClient.snapshot, playerClient)
@@ -150,7 +152,9 @@ end
 local function startPlayers()
   local socket = require("socket")
   if config.role == "play" then
-    playerClient = envyImport("client/play.lua").new(socket, config)
+    playerClient = envyImport("client/play.lua").new(socket, config, function(line)
+      rom.log.info("[H2T-play] " .. line)
+    end)
     public.getRemoteSnapshot = function() return playerClient.snapshot, playerClient.seat end
     public.chooseRemoteBoon = function(opportunity, option) return playerClient:chooseBoon(opportunity, option) end
   else
@@ -187,6 +191,11 @@ function Reload.load()
   if active then
     -- The loader cleared these even when the candidate could not load.
     rom.gui.add_always_draw_imgui(frame)
+    if active.BoonMenu and not config.observerSnapshots then
+      rom.gui.add_imgui(function()
+        if playerClient then active.BoonMenu.draw(playerClient, ImGui) end
+      end)
+    end
   end
   if newGame then
     if config.observerSnapshots or control then gameState:Install() end

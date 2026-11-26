@@ -94,7 +94,11 @@ local function mockLoader(root)
   public.rom = {
     game = game,
     paths = { Content = function() return "mock-content" end },
-    gui = { add_always_draw_imgui = function(fn) mock.frames[#mock.frames + 1] = fn end },
+    gui = {
+      add_always_draw_imgui = function(fn) mock.frames[#mock.frames + 1] = fn end,
+      add_imgui = function(fn) mock.drawMenu = fn end,
+      is_open = function() return mock.menuOpen end,
+    },
     on_import = { pre = function(fn) mock.imports[#mock.imports + 1] = fn end },
     mods = { ["LuaENVY-ENVY"] = { auto = function()
       -- ENVY binds each entry chunk to the same private environment on reload.
@@ -170,7 +174,7 @@ local function mockLoader(root)
   function mock:reload()
     -- Hell2Modding clears both loader callback lists, keeps the plugin
     -- environment and reruns main.lua. The game's OnAnyLoad list survives.
-    self.frames, self.imports = {}, {}
+    self.frames, self.imports, self.drawMenu = {}, {}, nil
     assert(loadfile(root .. "/src/main.lua", "t", public))()
   end
 
@@ -239,9 +243,13 @@ return function(root, test, eq)
       end }, { __index = socket })
       host:reload()
       local port = assert(table.concat(host.info, "\n"):match("player listener 127%.0%.0%.1:(%d+)"))
-      -- The normal CLI owns the first seat in this serve instance.
-      host:queue("player add Local\n")
+      -- A serve instance starts empty. Its first real connection owns the stock hero.
+      local primary = assert(import("client/connection.lua").connect(socket, port, "FirstPlayer"))
       host:poll(0)
+      assert(primary:poll())
+      eq(primary.playerId, 1)
+      eq(primary.snapshot.heroes[1].playerId, primary.playerId)
+      eq(primary.snapshot.heroes[1].id, 40000)
       guest.edits["config.lua"] = 'return {role="play",playerName="Remote",playerPort=' .. port .. '}'
       local raw
       guest.observerSocket = setmetatable({ tcp = function()
@@ -347,8 +355,26 @@ return function(root, test, eq)
       untilSeen(function() return slot.connectionGeneration == 4 and remoteClaim() and remoteClaim().opportunity end)
       local own = remoteClaim()
       assert(not guest.public.chooseRemoteBoon(own.opportunity, "PoseidonCastBoon"))
-      assert(guest.public.chooseRemoteBoon(own.opportunity, own.grantOptions[2]))
-      untilSeen(function() return remoteClaim() and remoteClaim().state == "consumed" end)
+      local labels, buttons = {}, {}
+      guest.public.ImGui = {
+        Begin = function() return true end, End = function() end,
+        TextUnformatted = function(label) labels[label] = true end,
+        Button = function(label)
+          buttons[#buttons+1] = label
+          return label == special .. "##" .. opportunity
+        end,
+      }
+      assert(not host.drawMenu)
+      guest.menuOpen = true
+      guest.drawMenu()
+      eq(table.concat(buttons, ","), option .. "##" .. opportunity .. "," .. special .. "##" .. opportunity)
+      untilSeen(function()
+        return remoteClaim() and remoteClaim().state == "consumed" and host.inputs[#host.inputs].frame.moveX == 0
+      end)
+      buttons = {}
+      guest.drawMenu()
+      eq(#buttons, 0)
+      assert(labels[special] and labels["PoseidonUpgrade #2 | consumed"])
       eq(selections, 1)
       eq(remoteClaim().playerId, seat)
       eq(remoteClaim().choice, special)
@@ -356,6 +382,7 @@ return function(root, test, eq)
       assert(not guest.public.chooseRemoteBoon(opportunity, option))
       eq(#guest.maps, 0)
       eq(guest.polls, 0)
+      primary:close()
       raw:close()
       listener:close()
     end)
