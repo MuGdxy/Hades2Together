@@ -450,6 +450,96 @@ assert(observedConsumable.id == 3 and observedConsumable.encounterId == spawned.
 assert(observedConsumable.kind == "MaxHealthDrop" and observedConsumable.objectId == offer.ObjectId)
 assert(observedConsumable.claims == nil)
 
+-- Replay the ordinary stock choice argument/return contract on the archived
+-- Poseidon offer. The grant and actor are the game boundary in this fixture.
+do
+  capture.session.role = "serve+play"
+  capture.session.slots[1] = { name = "Mel", connected = true }
+  game.LootObjects[offer.ObjectId], game.MapState.RoomRequiredObjects[offer.ObjectId] = offer, offer
+  game.MapState.ActiveObstacles[offer.ObjectId] = nil
+  nativeName = offer.Name
+  assert(capture:RoomRewards()[1].id == spawned.id)
+  local screen = { Name = "UpgradeChoice", Source = offer, ChoiceMade = true }
+  local data = { Name = "PoseidonWeaponBoon" }
+  local button = { Screen = screen, LootData = offer, Data = data, Type = "Trait",
+    OnPressedFunctionName = "HandleUpgradeChoiceSelection" }
+  screen.UpgradeButtons = { button }
+  game.ActiveScreens, game.ScreenAnchors = { UpgradeChoice = screen }, { ChoiceScreen = screen }
+  game.CurrentLootData, useable = offer, false
+  local args = { FromLoot = true, PreProcessedForDisplay = true, TraitData = data }
+  local insert, stockGrant = false, nil
+  function game.AddTraitData(recipient, selected, callArgs)
+    if stockGrant then return stockGrant(recipient, selected, callArgs) end
+    local trait = { Id = "original-trait-id", Name = selected.Name }
+    if insert then table.insert(recipient.Traits, trait) end
+    return trait, nil, "stock return"
+  end
+  hero.Traits = {}
+  capture:Install()
+  local wrapped = game.AddTraitData
+  capture:Install()
+  assert(game.AddTraitData == wrapped)
+  game.AddTraitData(hero, data, args)
+  assert(capture:RoomRewards() == nil) -- screen open and return without a committed instance
+  insert = true
+  game.AddTraitData({ ObjectId = 123, Traits = {} }, data, args)
+  button.LootData = replacement -- same ID and name, different original object
+  game.AddTraitData(hero, data, args)
+  assert(capture:RoomRewards() == nil)
+  hero.Traits, button.LootData = {}, offer
+  if arg[1] then
+    -- Use the installed game's Lua for the selection, grant, insertion and return.
+    -- Engine/UI calls are doubles. Pause at LogUpgradeChoice after the grant.
+    setmetatable(game, { __index = _G })
+    for _, module in ipairs({ "TraitLogic", "UpgradeChoiceLogic" }) do
+      assert(loadfile(arg[1] .. "/" .. module .. ".lua", "t", game))()
+    end
+    stockGrant, game.AddTraitData = game.AddTraitData, wrapped
+    game.GameState = { TraitsTaken = {} }
+    for _, name in ipairs({ "EquipReferencedWeapons", "thread", "RemoveStoreItemPin",
+      "UpdateHeroTraitDictionary", "ProcessHeroTraitChanges", "CheckActivatedTraits",
+      "ClampSprintSpeed", "MergeWeaponDataOverride" }) do game[name] = function() end end
+    game.DeepCopyTable = function(t)
+      local copy = {}
+      for k, v in pairs(t) do copy[k] = v end
+      return copy
+    end
+    game.AreTraitsIdentical = function() return false end
+    game.HeroHasTrait = function() return false end
+    game.GetTraitUniqueId = function() return "fixture-unique-id" end
+    game.LogUpgradeChoice = function() coroutine.yield("stock grant returned") end
+    local ok, marker = coroutine.resume(coroutine.create(game.HandleUpgradeChoiceSelection), screen, button, {})
+    assert(ok and marker == "stock grant returned", tostring(marker))
+    assert(hero.Traits[1].Name == data.Name and hero.Traits[1].Id == "fixture-unique-id")
+  else
+    local result, gap, last = game.AddTraitData(hero, data, args)
+    assert(result == hero.Traits[1] and gap == nil and last == "stock return")
+  end
+  game.MapState.RoomRequiredObjects[offer.ObjectId], game.LootObjects[offer.ObjectId] = nil, nil
+  local roomView = capture:ReadActors().room
+  local wire = assert(Codec.decode(Codec.encode(Messages.snapshot(4, {}, {}, roomView))))
+  local received = wire.room.rewards[1]
+  assert(environment.import("protocol/room.lua").valid(wire.room))
+  assert(received.id == spawned.id and received.encounterId == spawned.encounterId and received.objectId == nil)
+  assert(#received.claims == 1 and received.claims[1].state == "consumed"
+    and received.claims[1].playerId == 1 and received.claims[1].choice == data.Name)
+  local line = environment.import("dev/bridge.lua").claimLines(capture:RoomRewards())[1]
+  assert(line:find("seat=1 state=consumed choice=PoseidonWeaponBoon", 1, true))
+  assert(environment.import("dev/observer_status.lua").format(wire):find(line, 1, true))
+  capture.session.slots[2].name = "Guest"
+  local path = os.tmpname()
+  local console = environment.import("dev/console.lua").new(capture.session)
+  environment.import("hack/menu.lua").publish({ console = console, statusPath = path }, capture, "polling")
+  local report = assert(io.open(path, "rb"))
+  local status = report:read("*a")
+  report:close()
+  os.remove(path)
+  assert(status:find(line, 1, true))
+  game.SessionState.MapLoads = 5
+  capture:OnMap(rewardRoom.Name)
+  assert(capture:RoomRewards() == nil)
+end
+
 -- Replay the three coincident guest positions from room 1, TCP tick 19.
 do
   local room = {}

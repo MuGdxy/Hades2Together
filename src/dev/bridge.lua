@@ -23,6 +23,18 @@ function Bridge.statusText(console)
   return Console.execute(console, "status") .. "\n" .. Console.execute(console, "players") .. "\n"
 end
 
+function Bridge.claimLines(rewards)
+  local lines = {}
+  for _, reward in ipairs(rewards or {}) do
+    for _, claim in ipairs(reward.claims or {}) do
+      lines[#lines + 1] = "claim reward=" .. reward.id .. " kind=" .. reward.kind
+        .. " seat=" .. claim.playerId .. " state=" .. claim.state
+        .. (claim.choice and " choice=" .. claim.choice or "")
+    end
+  end
+  return lines
+end
+
 function Bridge.sync(console, commandsPath, submitInput)
   local lines = {}
   local taken = commandsPath .. ".take"

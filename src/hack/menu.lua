@@ -29,6 +29,7 @@ local function readAll(path)
 end
 
 function Menu.publish(control, game, state)
+  local claims = Bridge.claimLines(game:RoomRewards())
   local report = io.open(control.statusPath, "wb")
   if report then
     report:write(Bridge.statusText(control.console))
@@ -37,6 +38,7 @@ function Menu.publish(control, game, state)
       report:write(table.concat(control.results, "\n") .. "\n")
     end
     report:write(game:BodyReport() .. "\n")
+    for _, line in ipairs(claims) do report:write(line .. "\n") end
     report:close()
   end
 end

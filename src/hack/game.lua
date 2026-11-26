@@ -3,6 +3,7 @@
 local Engine = import("hack/engine.lua")
 local GuestInput = import("hack/guest_input.lua")
 local HostInput = import("hack/host_input.lua")
+local Boon = import("hack/boon_claim.lua")
 local Actions = import("protocol/actions.lua")
 local Input = import("client/input.lua")
 local Inputs = import("dev/inputs.lua")
@@ -157,7 +158,7 @@ function Game:LoadedRoom(room)
   return load
 end
 
-local function readRoom(self, game, room)
+local function readRoom(self, game, room, rewardsOnly)
   local load = self:LoadedRoom(room)
   if not load then return nil end
   if not load.id then
@@ -167,8 +168,15 @@ local function readRoom(self, game, room)
   local view = {
     id = load.id, name = load.name,
     leaving = room.Leaving == true, exitsUnlocked = room.ExitsUnlocked == true,
-    exits = readExits(game.MapState),
   }
+  if not rewardsOnly then view.exits = readExits(game.MapState) end
+  if load.boonClaims then
+    view.rewards = {}
+    for _, receipt in ipairs(load.boonClaims) do
+      view.rewards[#view.rewards + 1] = { id = receipt.id, kind = receipt.kind,
+        encounterId = receipt.encounterId, claims = { receipt.claim } }
+    end
+  end
   local encounter = room.Encounter
   if type(encounter) == "table" and stockName(encounter.Name) then
     local reward = readAnchoredReward(game, room, encounter)
@@ -193,10 +201,32 @@ local function readRoom(self, game, room)
         offerId = load.offerSerial
         load.offers[reward] = offerId
       end
-      view.rewards = { { id = offerId, encounterId = id, objectId = reward.ObjectId, kind = reward.Name } }
+      if reward.Name == "PoseidonUpgrade" and game.LootObjects and game.LootObjects[reward.ObjectId] == reward then
+        if not load.boonOffer or load.boonOffer.source ~= reward or load.boonOffer.encounter ~= encounter then
+          load.boonOffer = { source = reward, objectId = reward.ObjectId, encounter = encounter,
+            id = offerId, encounterId = id }
+        end
+      end
+      view.rewards = view.rewards or {}
+      for _, prior in ipairs(view.rewards) do
+        if prior.id == offerId then
+          prior.objectId = reward.ObjectId
+          return view
+        end
+      end
+      view.rewards[#view.rewards + 1] = { id = offerId, encounterId = id, objectId = reward.ObjectId, kind = reward.Name }
     end
   end
   return view
+end
+
+function Game:RoomRewards()
+  local g = rom.game
+  local room = g.CurrentRun and g.CurrentRun.CurrentRoom
+  if not room or not ((room.Encounter and room.Encounter.Name == "HealthRestore")
+    or (self.roomLoad and self.roomLoad.boonClaims)) then return end
+  local view = readRoom(self, g, room, true)
+  return view and view.rewards
 end
 
 local function readActor(self, unit)
@@ -650,6 +680,9 @@ function Game:OnMap(name)
 end
 
 function Game:Install()
+  if self.session and Session.isAuthority(self.session) and not self.boonObserver then
+    self.boonObserver = Boon.observe(self, rom.game)
+  end
   if self.installed then
     return
   end

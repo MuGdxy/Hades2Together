@@ -44,8 +44,10 @@ function readStatus(status) {
   return { mode, room: field("room") || map, tick: field("tick"), players,
     connection: field("connection"), seat: field("seat"), sent: field("sentSeq"), reason: field("reason"),
     actors: lines.filter((line) => /^(hero|enemy) id=/.test(line)),
-    receipts: lines.filter((line) => /^(OK |ERR )/.test(line) &&
-      !/^OK (role=|none$|\d+:)/.test(line)).concat(
+    receipts: lines.filter((line) => /^(OK |ERR |claim reward=)/.test(line) &&
+      !/^OK (role=|none$|\d+:)/.test(line)).map((line) => line.replace(
+      /^claim reward=(\d+) kind=(\S+) seat=(\d+) state=consumed choice=(.+)$/,
+      "席 $3 已领取 $4（$2，奖励 $1）")).concat(
       [...body.matchAll(/ (enter|play)=(.*?)(?= enter=| play=| map=| \d+:|$)/g)].map(([, key, result]) => key + "=" + result)),
     queued: lines.some((line) => line.startsWith("queue=")) };
 }

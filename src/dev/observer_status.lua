@@ -39,6 +39,7 @@ local function roomLines(lines, room)
     lines[#lines + 1] = "reward id=" .. reward.id .. " kind=" .. reward.kind
       .. " encounterId=" .. reward.encounterId .. object
   end
+  for _, line in ipairs(Bridge.claimLines(room.rewards)) do lines[#lines + 1] = line end
 end
 
 function ObserverStatus.format(snapshot, player)
