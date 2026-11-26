@@ -11,12 +11,6 @@ local function name(value)
   return type(value) == "string" and #value > 0 and #value <= 128 and not value:find("%c")
 end
 
-local function seat(value)
-  if id(value) and value <= Session.MAX_PLAYERS then
-    return value
-  end
-end
-
 -- Return the record keys so rewards can also check room membership.
 local function unique(list, keyFor)
   if type(list) ~= "table" then
@@ -48,13 +42,13 @@ end
 
 local claimStates = { eligible = true, claiming = true, consumed = true }
 
-local function rewardId(reward, participants)
+local function rewardId(reward, participants, maxPlayers)
   if type(reward) ~= "table" or not id(reward.id) or not id(reward.encounterId)
     or not name(reward.kind) or (reward.objectId ~= nil and not id(reward.objectId)) then
     return nil
   end
   if reward.claims ~= nil and not unique(reward.claims, function(claim)
-    if type(claim) == "table" and seat(claim.playerId) and claimStates[claim.state]
+    if type(claim) == "table" and Session.validSeat(claim.playerId, maxPlayers) and claimStates[claim.state]
       and (not participants or participants[claim.playerId])
       and (claim.choice == nil or claim.state == "consumed" and name(claim.choice)) then
       return claim.playerId
@@ -65,7 +59,7 @@ local function rewardId(reward, participants)
   return reward.id
 end
 
-function Room.valid(room)
+function Room.valid(room, maxPlayers)
   if type(room) ~= "table" or not id(room.id) or not name(room.name)
     or type(room.exitsUnlocked) ~= "boolean" or type(room.leaving) ~= "boolean" then
     return false
@@ -75,13 +69,22 @@ function Room.valid(room)
     or not name(encounter.name) or type(encounter.completed) ~= "boolean") then
     return false
   end
-  local participants = unique(room.participants, seat)
+  if maxPlayers == nil then
+    maxPlayers = Session.MAX_PLAYERS
+  elseif not Session.validSeat(maxPlayers) then
+    return false
+  end
+  local participants = unique(room.participants, function(seat)
+    if Session.validSeat(seat, maxPlayers) then
+      return seat
+    end
+  end)
   if room.participants ~= nil and not participants then
     return false
   end
   return (room.exits == nil or unique(room.exits, exitId) ~= nil)
     and (room.rewards == nil or unique(room.rewards, function(reward)
-      return rewardId(reward, participants)
+      return rewardId(reward, participants, maxPlayers)
     end) ~= nil)
 end
 

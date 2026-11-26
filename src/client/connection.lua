@@ -49,16 +49,20 @@ function Client:accept(msg)
   end
   if not self.playerId then
     local id = msg.playerId
+    local maxPlayers = msg.maxPlayers
+    if maxPlayers == nil then
+      maxPlayers = Session.MAX_PLAYERS
+    end
     if msg.t == "welcome" and Messages.accepts(msg.protocol)
-      and Messages.validTick(id) and id >= 1 and id <= Session.MAX_PLAYERS then
-      self.playerId = id
+      and Session.validSeat(maxPlayers) and Session.validSeat(id, maxPlayers) then
+      self.playerId, self.maxPlayers = id, maxPlayers
       return true
     end
     return false
   end
   if msg.t == "snap" and Messages.validTick(msg.tick)
     and records(msg.heroes, "id", "number") and records(msg.enemies, "id", "number")
-    and (msg.room == nil or Room.valid(msg.room)) then
+    and (msg.room == nil or Room.valid(msg.room, self.maxPlayers)) then
     if self.snapshot and msg.tick <= self.tick then
       return nil
     end
@@ -96,7 +100,7 @@ function Client:sendInput(state)
     return nil, "seat not assigned"
   end
   local frame = Input.frame(self.tick, self.playerId, state, self.seq + 1)
-  if not Messages.validInput(frame, Session.MAX_PLAYERS) then
+  if not Messages.validInput(frame, Session.capacity(self)) then
     return nil, "invalid input"
   end
   local ok, err = self.transport:send("in", frame)

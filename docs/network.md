@@ -24,6 +24,8 @@ python tests/net_smoke.py --lua texlua
 
 ## 接入约定
 
+插件启动时从 `config.maxPlayers` 设置会话容量，默认四席。独立权威可通过 `Server.listen` 的 `options.maxPlayers` 设置同一容量。客户端从 `welcome.maxPlayers` 读取容量，历史握手省略该字段时沿用四席。CLI 和回放脚本使用会话容量校验席号；回放脚本可以只指定第五席，空席保留。实机可用角色及输入通道由原生适配层确认。
+
 - `Server.listen(socket, port, engine, options)` 创建专用权威；设置 `port=0` 可由系统分配端口，然后读取 `server:port()`。初始化期间使用 `server:poll()` 完成入席，准备好后由调用方按权威 tick 调用 `server:step()`。
 - `Client.connect(socket, port, name)` 发起连接并排入握手。随后用 `client:poll()` 取消息。收到服务器的 `welcome` 后，用 `client:sendInput(state)` 提交当前玩家的方向、按键和瞄准状态。服务器按连接绑定席位、要求递增序号并在进入权威循环时指定输入 tick。关闭连接调用 `close()`。断开时释放连接，保留名字对应的席位及权威角色；本机验证按名字恢复席位。
 - 每帧是 4 字节大端长度加一条 `Codec` 消息，正文上限为 64 KiB。读取和写入可跨多次轮询，接入、每轮解码和发送缓冲都有上限。握手有时限，慢连接的发送队列满时关闭连接。
@@ -34,7 +36,7 @@ python tests/net_smoke.py --lua texlua
 
 在测试安装的 `src/config.lua` 对应插件文件中设 `observerSnapshots = true` 后重启。用 [CLI 安全启动方式](cli.md) 进入 `F_Combat01`。模式使用固定版本 Hell2Modding 1.0.125 预加载的 `require("socket")`，在 `127.0.0.1` 监听 `port`，`port = 0` 时读取加载器日志中的实际端口。每次轮询都有连接、收发与队列上限，快照随游戏更新发布，上限约 20 Hz。Lua 热更新保留原监听器、连接和 tick，游戏进程退出时释放套接字。观察模式配置、启动协调器或服务端传输代码更改后需重启；`Game:ReadActors()` 等运行模块的改动可热更新。
 
-外部进程通过 `Client.connect(socket, port, name)` 和 `Client:poll()` 接收完整状态，最多四个观察席。同名断开重连沿用席位，并从下一份完整快照恢复。观察模式使用 `Game:ReadActors()`，输入消息会被拒绝，游戏内的 CLI 动作队列暂停处理。实机验证观察到一个原生英雄和原版遭遇；观察席仅用于网络连接。
+外部进程通过 `Client.connect(socket, port, name)` 和 `Client:poll()` 接收完整状态，观察连接容量由 `config.maxPlayers` 设置。同名断开重连沿用席位，并从下一份完整快照恢复。观察模式使用 `Game:ReadActors()`，输入消息会被拒绝，游戏内的 CLI 动作队列暂停处理。实机验证观察到一个原生英雄和原版遭遇；观察席仅用于网络连接。
 
 从仓库根目录运行 `texlua tests/observer.lua` 检查只读传输、输入拒绝和重连。房间及门的读取范围和实机证据见 [实机只读投影](room-rewards.md#实机只读投影)。
 

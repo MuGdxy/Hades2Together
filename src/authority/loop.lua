@@ -13,7 +13,7 @@ function Authority.start(engine, options)
   options = options or {}
   return {
     engine = engine,
-    party = Party.new(),
+    party = Party.new(options.maxPlayers),
     tick = 0,
     stockRules = options.stockRules == true,
     hpPerExtra = options.hpPerExtraPlayer or Scaling.DEFAULT_PER_EXTRA,
@@ -72,7 +72,7 @@ function Authority.step(auth, inputs)
     local actors = auth.engine:ReadActors()
     local room = actors.room
     if room ~= nil then
-      assert(Room.valid(room), "invalid authoritative room projection")
+      assert(Room.valid(room, auth.party.maxPlayers), "invalid authoritative room projection")
       assert(not auth.roomId or room.id >= auth.roomId, "authoritative room instance regressed")
       auth.roomId = room.id
     end

@@ -37,8 +37,8 @@ function Messages.roster(slots)
   }
 end
 
-function Messages.welcome(playerId)
-  return { t = "welcome", protocol = Messages.PROTOCOL, playerId = playerId }
+function Messages.welcome(playerId, maxPlayers)
+  return { t = "welcome", protocol = Messages.PROTOCOL, playerId = playerId, maxPlayers = maxPlayers }
 end
 
 function Messages.error(reason)

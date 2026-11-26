@@ -64,15 +64,16 @@ local function mockLoader(root)
     assert(name == "socket")
     return mock.observerSocket
   end
-  public.bindObserver = function(socket, port, readActors)
+  public.bindObserver = function(socket, port, readActors, maxPlayers)
     assert(socket == mock.observerSocket and port == 0)
     mock.observerStarts = (mock.observerStarts or 0) + 1
+    mock.observerCapacity = maxPlayers
     local function read()
       mock.observed = readActors()
       return mock.observed
     end
     if mock.observerFactory then
-      mock.liveObserver = assert(mock.observerFactory(socket, port, read))
+      mock.liveObserver = assert(mock.observerFactory(socket, port, read, maxPlayers))
       return mock.liveObserver
     end
     return {
@@ -290,7 +291,7 @@ return function(root, test, eq)
     local function snapshotTick()
       return mod.liveObserver and mod.liveObserver.tick or mod.observerTick
     end
-    mod.edits["config.lua"] = 'return { role = "serve+play", cliSnapshots = true, port = 0 }'
+    mod.edits["config.lua"] = 'return { role = "serve+play", cliSnapshots = true, port = 0, maxPlayers = 5 }'
     mod.edits["authority/server.lua"] = "return { observe = bindObserver }"
     mod.edits["dev/observer_status.lua"] = "error('CLI must own status.txt')"
     mod.game.CurrentRun = {
@@ -353,6 +354,8 @@ return function(root, test, eq)
     assert(status:find("OK joined 2 Guest", 1, true), status)
     assert(not status:find("control=observer", 1, true), status)
     local instance = assert(mod.observedGame)
+    eq(instance.session.maxPlayers, 5)
+    eq(mod.observerCapacity, 5)
     eq(mod.observed.inputTick, 1)
     eq(mod.observed.heroes[1].id, 99)
     eq(instance.session.slots[1].name, "Player")
@@ -360,6 +363,7 @@ return function(root, test, eq)
     eq(instance.session.slots[3], nil)
     receive(1, 30)
     if subscriber then
+      eq(subscriber.maxPlayers, 5)
       assert(subscriber:sendInput({ moveX = 1, buttons = 1 }))
     end
 

@@ -108,7 +108,7 @@ local function prepare()
   if config.observerSnapshots then
     return candidate, nil, candidate.Game.new()
   end
-  local session = candidate.Session.new(config.role)
+  local session = candidate.Session.new(config.role, config.maxPlayers)
   local slot = candidate.Session.join(session, config.playerName or "Player")
   local newControl = candidate.Menu.new(session)
   local newGame = candidate.Game.new(session)
@@ -117,9 +117,10 @@ end
 
 local function startObserver()
   local Server = envyImport("authority/server.lua")
+  local maxPlayers = control and active.Session.capacity(gameState.session) or config.maxPlayers
   observer = assert(Server.observe(require("socket"), config.port, function()
     return gameState:ReadActors()
-  end))
+  end, maxPlayers))
   rom.log.info("[Hades2Together] observing on 127.0.0.1:" .. observer:port())
 end
 

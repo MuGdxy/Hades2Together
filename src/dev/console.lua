@@ -16,14 +16,7 @@ local function freshName(console)
   while true do
     console.fakeSerial = console.fakeSerial + 1
     local name = "Fake" .. tostring(console.fakeSerial)
-    local taken = false
-    for index = 1, Session.MAX_PLAYERS do
-      local slot = console.session.slots[index]
-      if slot and slot.name == name then
-        taken = true
-      end
-    end
-    if not taken then
+    if not Session.findSeat(console.session, name) then
       return name
     end
   end
@@ -34,22 +27,20 @@ local function findSlot(session, token)
   if index and session.slots[index] then
     return index
   end
-  for seat = 1, Session.MAX_PLAYERS do
-    local slot = session.slots[seat]
-    if slot and slot.name == token then
-      return seat
-    end
-  end
+  return Session.findSeat(session, token)
 end
 
 local function roster(session)
   local parts = {}
-  for index = 1, Session.MAX_PLAYERS do
+  local seats = {}
+  for index in pairs(session.slots) do
+    seats[#seats + 1] = index
+  end
+  table.sort(seats)
+  for _, index in ipairs(seats) do
     local slot = session.slots[index]
-    if slot then
-      local state = slot.connected and "up" or "down"
-      parts[#parts + 1] = index .. ":" .. slot.name .. ":" .. state
-    end
+    local state = slot.connected and "up" or "down"
+    parts[#parts + 1] = index .. ":" .. slot.name .. ":" .. state
   end
   if #parts == 0 then
     return "none"
@@ -68,11 +59,11 @@ function Console.roster(console)
   return roster(console.session)
 end
 
-local function submitSample(words, submitInput)
+local function submitSample(words, submitInput, maxPlayers)
   local seatText = words[2]
   local seat = seatText and seatText:match("^%d+$") and tonumber(seatText)
-  if not seat or seat < 1 or seat > Session.MAX_PLAYERS then
-    return "ERR input seat must be 1-" .. Session.MAX_PLAYERS
+  if not Session.validSeat(seat, maxPlayers) then
+    return "ERR input seat must be 1-" .. maxPlayers
   end
   local moveX, moveY = tonumber(words[3]), tonumber(words[4])
   if not Messages.validAxis(moveX) or not Messages.validAxis(moveY) then
@@ -115,7 +106,7 @@ function Console.execute(console, line, submitInput)
   end
 
   if head == "input" then
-    return submitSample(words, submitInput)
+    return submitSample(words, submitInput, Session.capacity(session))
   end
 
   if head == "play" then

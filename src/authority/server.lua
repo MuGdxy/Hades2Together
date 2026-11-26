@@ -8,9 +8,8 @@ local Server = {}
 Server.__index = Server
 
 local HANDSHAKE_SECONDS = 2
-local MAX_CONNECTIONS = 2 * Session.MAX_PLAYERS
 
-local function listen(socket, port)
+local function listen(socket, port, session)
   local listener, err = Tcp.listen(socket, port)
   if not listener then
     return nil, err
@@ -18,23 +17,23 @@ local function listen(socket, port)
   return setmetatable({
     listener = listener,
     clock = socket.gettime,
-    session = Session.new("serve"),
+    session = session,
     peers = {},
   }, Server)
 end
 
 function Server.listen(socket, port, engine, options)
   local authority = Authority.start(engine, options)
-  local server, err = listen(socket, port)
+  local server, err = listen(socket, port, Session.new("serve", authority.party.maxPlayers))
   if server then
     server.authority = authority
   end
   return server, err
 end
 
-function Server.observe(socket, port, readActors)
+function Server.observe(socket, port, readActors, maxPlayers)
   assert(type(readActors) == "function", "observer requires an actor reader")
-  local server, err = listen(socket, port)
+  local server, err = listen(socket, port, Session.new("serve", maxPlayers))
   if server then
     server.readActors = readActors
     server.tick = 0
@@ -67,10 +66,9 @@ function Server:join(peer, message, now)
   if message.t ~= "hello" or not Messages.validHello(message) then
     return refuse(peer, "invalid hello or protocol", now)
   end
-  for _, slot in pairs(self.session.slots) do
-    if slot.name == message.name and slot.connected then
-      return refuse(peer, "name already connected", now)
-    end
+  local reserved = Session.findSeat(self.session, message.name)
+  if reserved and self.session.slots[reserved].connected then
+    return refuse(peer, "name already connected", now)
   end
   local playerId, status = Session.join(self.session, message.name)
   if not playerId then
@@ -84,11 +82,12 @@ function Server:join(peer, message, now)
     end
   end
   peer.playerId = playerId
-  reply(peer, Messages.welcome(playerId))
+  local maxPlayers = Session.capacity(self.session)
+  reply(peer, Messages.welcome(playerId, maxPlayers ~= Session.MAX_PLAYERS and maxPlayers or nil))
 end
 
-local function acceptInput(peer, msg)
-  if msg.t ~= "in" or not Messages.validInput(msg, Session.MAX_PLAYERS) then
+local function acceptInput(peer, msg, maxPlayers)
+  if msg.t ~= "in" or not Messages.validInput(msg, maxPlayers) then
     return reject(peer, "invalid input")
   end
   if msg.playerId ~= peer.playerId then
@@ -112,8 +111,10 @@ function Server:poll()
     return nil, "closed"
   end
   local now = self.clock()
-  -- At most this many live streams, including sockets still sending hello.
-  for _ = #self.peers + 1, MAX_CONNECTIONS do
+  local maxPlayers = Session.capacity(self.session)
+  -- Keep room for handshakes without allowing an unbounded accept pass.
+  local available = 2 * maxPlayers - #self.peers
+  for _ = 1, math.min(available, Tcp.MAX_MESSAGES) do
     local raw, err = self.listener:accept()
     if not raw then
       if err ~= "timeout" then
@@ -143,7 +144,7 @@ function Server:poll()
       elseif self.readActors then
         reject(peer, "observer connection is read-only")
       else
-        acceptInput(peer, item.msg)
+        acceptInput(peer, item.msg, maxPlayers)
       end
     end
     stream:flush()
@@ -184,7 +185,8 @@ function Server:step()
   local result
   if self.readActors then
     local actors = self.readActors()
-    assert(actors.room == nil or Room.valid(actors.room), "invalid observed room projection")
+    assert(actors.room == nil or Room.valid(actors.room, Session.capacity(self.session)),
+      "invalid observed room projection")
     self.tick = self.tick + 1
     result = { snapshot = Messages.snapshot(self.tick, actors.heroes, actors.enemies, actors.room), commands = {} }
   else

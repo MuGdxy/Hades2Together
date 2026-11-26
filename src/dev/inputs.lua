@@ -5,13 +5,19 @@
 local Inputs = {}
 
 local Messages = import("protocol/messages.lua")
-local MAX_SLOT = import("protocol/session.lua").MAX_PLAYERS
+local Session = import("protocol/session.lua")
 
-function Inputs.parse(text)
+function Inputs.parse(text, maxPlayers)
   local names = {}
   local steps = {}
-  for slot = 1, MAX_SLOT do
-    steps[slot] = {}
+  if maxPlayers == nil then
+    maxPlayers = Session.MAX_PLAYERS
+    -- Preserve the original one-argument result for existing callers.
+    for slot = 1, maxPlayers do
+      steps[slot] = {}
+    end
+  else
+    assert(Session.validSeat(maxPlayers), "invalid maxPlayers")
   end
   if type(text) ~= "string" then
     return { names = names, steps = steps }
@@ -21,7 +27,7 @@ function Inputs.parse(text)
       local nameSlot, name = line:match("^%s*name%s+(%d+)%s+(.+)$")
       if nameSlot then
         local slot = tonumber(nameSlot)
-        if slot and slot >= 1 and slot <= MAX_SLOT then
+        if Session.validSeat(slot, maxPlayers) then
           names[slot] = name:gsub("%s+$", "")
         end
       else
@@ -30,10 +36,11 @@ function Inputs.parse(text)
         local mx = tonumber(mxText)
         local my = tonumber(myText)
         local dur = tonumber(durText)
-        if slot and steps[slot] and Messages.validAxis(mx) and Messages.validAxis(my)
+        if Session.validSeat(slot, maxPlayers) and Messages.validAxis(mx) and Messages.validAxis(my)
             and dur and dur > 0 and dur < math.huge then
-          local list = steps[slot]
+          local list = steps[slot] or {}
           list[#list + 1] = { mx = mx, my = my, dur = dur }
+          steps[slot] = list
         end
       end
     end
