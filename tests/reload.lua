@@ -96,6 +96,7 @@ local function mockLoader(root)
       error = error,
     },
   }
+  mock.rom = public.rom
   public.io = { open = function(path, mode)
     if path == statusPath and mode == "wb" and mock.statusError then
       error(mock.statusError, 0)
@@ -303,7 +304,7 @@ return function(root, test, eq)
     mod.game.CurrentRun = { CurrentRoom = { Name = "F_Test" }, Hero = { ObjectId = 99 } }
     mod.game.GameState = { IllegalConversationModification = true }
     local gameSource, replacements = readSource(root, "hack/game.lua")
-      :gsub("function Game:PushInput%(playerId%).-\nend",
+      :gsub("function Game:PushInput%(playerId, frame%).-\nend",
         "function Game:PushInput(playerId, frame)\n  return captureInput(playerId, frame)\nend")
     eq(replacements, 1)
     mod.edits["hack/game.lua"] = gameSource
@@ -365,7 +366,7 @@ return function(root, test, eq)
     local mod = mockLoader(root)
     mod.game.CurrentRun = { CurrentRoom = { Name = "F_Combat01" }, Hero = { ObjectId = 99 } }
     local source = readSource(root, "hack/game.lua")
-    mod.edits["hack/game.lua"] = source:gsub("function Game:PushInput%(playerId%).-\nend",
+    mod.edits["hack/game.lua"] = source:gsub("function Game:PushInput%(playerId, frame%).-\nend",
       "function Game:PushInput(playerId, frame)\n  return captureInput(playerId, frame)\nend")
     mod:reload()
     mod:queue(table.concat({
@@ -411,6 +412,55 @@ return function(root, test, eq)
     eq(playback.moveX, 0)
     eq(playback.moveY, 1)
     eq(playback.buttons, 0)
+  end)
+
+  test("host sampler binds neutral, submits canonical frames and revokes on seat replacement", function()
+    local mod = mockLoader(root)
+    mod.game.CurrentRun = { CurrentRoom = { Name = "Room" }, Hero = { ObjectId = 91 } }
+    mod.game.SessionState = { MapLoads = 7 }
+    mod.game.IsInputAllowed = function() return true end
+    local calls, submitted = {}, {}
+    local function record(name, result)
+      return function(...)
+        calls[#calls + 1] = name
+        return result
+      end
+    end
+    local trace = { outcome = "zero_pads" }
+    mod.rom.data = {
+      h2t_sampler_install = record("install", "ready"),
+      h2t_sampler_observe = function(id) eq(id, 91) return trace end,
+      h2t_sampler_arm = record("arm", "attached"),
+      h2t_active_bind = function(id, epoch)
+        eq(id, 91) eq(epoch, 7) return record("bind", true)()
+      end,
+      h2t_active_connect = record("connect", true), h2t_active_clear = record("clear", true),
+      h2t_active_audit = function() return { batch = 3, valid = true, complete = true, sequence = 0 } end,
+      h2t_active_revoke = record("revoke", true),
+      h2t_active_submit = function(...)
+        submitted[#submitted + 1] = {...}
+        return true
+      end,
+    }
+    mod:reload()
+    mod:queue("input 1 1 0\n")
+    assert(mod:poll(0):find("ERR input unsupported waiting for stock pad recognition", 1, true))
+    trace = { outcome = "complete", stock_same = true, owner_same = true,
+      direct_neutral = true, handler_neutral = true, sample_neutral = true }
+    mod:poll(0.02)
+    mod:reload()
+    mod:queue("input 1 0.8 0 Attack2\nplayer add Guest\ninput 2 1 0\ninput 1 0 0 Rush\n")
+    local report = mod:poll(0.04)
+    assert(report:find("OK input 1", 1, true))
+    assert(report:find("seat 2 has no native player input slot", 1, true))
+    assert(report:find("ERR input unsupported host sampler supports", 1, true))
+    for i, value in ipairs({7, 2, 0.8, 0, 0, 0, 2}) do eq(submitted[1][i], value) end
+    mod.game.IsInputAllowed = function() return false end
+    mod:queue("input 1 0 0\nplayer remove 1\nplayer add Other\ninput 1 1 0\n")
+    assert(mod:poll(0.06):find("ERR input unsupported host owner changed", 1, true))
+    for i, value in ipairs({7, 4, 0, 0, 0, 0, 0}) do eq(submitted[2][i], value) end
+    eq(#submitted, 2)
+    eq(table.concat(calls, ","), "install,arm,bind,connect,clear,revoke")
   end)
 
   test("live CLI playback refuses unsupported seats without spawning or moving actors", function()

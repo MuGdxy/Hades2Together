@@ -1,6 +1,7 @@
 -- Live game binding for the real hero and the local control queue.
 
 local Engine = import("hack/engine.lua")
+local HostInput = import("hack/host_input.lua")
 local Actions = import("protocol/actions.lua")
 local Input = import("client/input.lua")
 local Inputs = import("dev/inputs.lua")
@@ -265,12 +266,41 @@ function Game:ReadLocalInput()
   }
 end
 
-function Game:PushInput(playerId)
+function Game:PushInput(playerId, frame)
   if playerId ~= 1 then
-    return false, "seat " .. playerId .. " has no native player input slot"
+    return false, "seat " .. tostring(playerId) .. " has no native player input slot"
   end
-  -- The retail SendControlInput Lua action returns without dispatching input.
-  return false, "the retail Lua API cannot submit native player movement"
+  if not rom or not rom.data or not rom.data.h2t_active_submit then
+    return false, "the retail Lua API cannot submit native player movement"
+  end
+  if not Messages.validInput(frame, Session.MAX_PLAYERS) or frame.playerId ~= playerId then
+    return false, "invalid input frame for host seat"
+  end
+  return HostInput.submit(self, frame)
+end
+
+function Game:InputOwner()
+  if not self.session or not Session.isAuthority(self.session) then return end
+  local g = rom.game
+  local run = g.CurrentRun
+  local hero, room = run and run.Hero, run and run.CurrentRoom
+  local load = g.SessionState and g.SessionState.MapLoads
+  local slot = self.session.slots[1]
+  if slot and slot.connected and room and not room.Leaving and hero and not hero.IsDead
+      and type(hero.ObjectId) == "number" and hero.ObjectId > 0
+      and stockId(load) then
+    local ok, allowSave = gameCall("GetConfigOptionValue", { Name = "AllowSaveLoad" })
+    if ok and allowSave == false then return slot, room, hero, load end
+  end
+end
+
+function Game:InputAllowed()
+  local ok, allowed = gameCall("IsInputAllowed", {})
+  return ok and allowed == true
+end
+
+function Game:UpdateInputOwner()
+  HostInput.update(self, rom.data)
 end
 
 function Game:SubmitInput(tick, playerId, state)
@@ -379,6 +409,8 @@ function Game:BeginPlayback(script)
 end
 
 function Game:Step(dt, tick)
+  -- Console commands can drop and replace the slot within a single pump.
+  HostInput.checkOwner(self)
   if not self.playing or not self.script then
     return
   end
@@ -418,6 +450,12 @@ end
 function Game:BodyReport()
   local heroId = self:HeroId()
   local parts = { "bodies hero=" .. (heroId and tostring(heroId) .. positionText(self, heroId) or "absent") }
+  if self.hostInput then
+    parts[#parts + 1] = "hostInput=" .. (self.hostInput.failure or self.hostInput.phase)
+    if self.hostInput.applied then
+      parts[#parts + 1] = "appliedSeq=" .. self.hostInput.applied
+    end
+  end
   if self.enterResult then
     parts[#parts + 1] = "enter=" .. self.enterResult:gsub("[\r\n]+", " ")
   end
@@ -439,6 +477,7 @@ function Game:BodyReport()
 end
 
 function Game:OnMap(name)
+  HostInput.revoke(self, "map loaded")
   self.map = name
   local game = rom.game
   local run, session, mapState = game.CurrentRun, game.SessionState, game.SessionMapState
