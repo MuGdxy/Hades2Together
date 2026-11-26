@@ -103,7 +103,8 @@ public:
             const auto player = read<Addr>(slots->players + i * sizeof(Addr));
             if (!player || *player == player_) return false;
         }
-        if (read<Addr>(player_ + 0x18) != Addr{0} || read<Addr>(player_ + 0x20) != Addr{0}) return false;
+        if (read<Addr>(player_ + 8) != Addr{0} || read<Addr>(player_ + 0x18) != Addr{0} ||
+            read<Addr>(player_ + 0x20) != Addr{0} || read<unsigned>(player_ + 0x28) != 0u) return false;
         const auto buckets = read<Addr>(player_ + 0x40);
         const auto count = read<size_t>(player_ + 0x48);
         const auto first = read<RumbleVector>(player_ + 0x78), second = read<RumbleVector>(player_ + 0x90);
