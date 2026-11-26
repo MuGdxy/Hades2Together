@@ -58,6 +58,7 @@ function readStatus(status) {
     player.offline = info.match(/\bofflineBatch=(\d+)/)?.[1];
     player.load = info.match(/\bload=(\d+)/)?.[1];
     player.publication = info.match(/\bpublication=(\d+)/)?.[1];
+    player.staff = guest?.match(/(?:^| )staff=(.+)$/)?.[1];
     player.state = guest?.split(" id=")[0] ?? (isHost ? hostStatus : undefined);
   }
   return { mode, room: field("room") || map, tick: field("tick"), players, claims,
@@ -89,7 +90,8 @@ function renderPlayers(status) {
     for (const [label, value] of [
       ["角色 ID", player.actor], ["位置 X, Y", player.position], ["最近应用序号", player.applied],
       ["离线中立批次", player.offline], ["房间装载", player.load], ["发布代际", player.publication],
-      ["原版输入", player.state], ["持有的波塞冬祝福", player.held]
+      ["原版输入", player.state], ["最近法杖装备结果", player.staff === "equipped" ? "已装备" : player.staff],
+      ["持有的波塞冬祝福", player.held]
     ]) {
       if (value !== undefined) details.append(node("dt", label), node("dd", value));
     }
