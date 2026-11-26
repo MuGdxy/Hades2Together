@@ -54,6 +54,12 @@ local function mockLoader(root)
     mock.inputs[#mock.inputs + 1] = { seat = seat, frame = frame }
     return true
   end
+  public.captureObservedGame = function(instance)
+    mock.observedGame = instance
+    if mock.observerFailure then
+      error(mock.observerFailure, 0)
+    end
+  end
   public.require = function(name)
     assert(name == "socket")
     return mock.observerSocket
@@ -61,11 +67,19 @@ local function mockLoader(root)
   public.bindObserver = function(socket, port, readActors)
     assert(socket == mock.observerSocket and port == 0)
     mock.observerStarts = (mock.observerStarts or 0) + 1
+    local function read()
+      mock.observed = readActors()
+      return mock.observed
+    end
+    if mock.observerFactory then
+      mock.liveObserver = assert(mock.observerFactory(socket, port, read))
+      return mock.liveObserver
+    end
     return {
       port = function() return 12345 end,
       clock = function() return mock.clock end,
       step = function()
-        mock.observed = readActors()
+        read()
         mock.observerTick = (mock.observerTick or 0) + 1
         return { snapshot = {
           tick = mock.observerTick, heroes = mock.observed.heroes,
@@ -263,6 +277,134 @@ return function(root, test, eq)
     eq(mod.observerStarts, 1)
     eq(#mod.frames, 1)
     eq(#mod.warnings, 0)
+  end)
+
+  test("authority CLI pumps every frame while its game publishes read-only snapshots", function()
+    local mod = mockLoader(root)
+    mod.observerSocket = {}
+    local socketAvailable, socket = pcall(require, "socket")
+    if socketAvailable then
+      mod.observerFactory = import("authority/server.lua").observe
+      mod.observerSocket = setmetatable({ gettime = function() return mod.clock end }, { __index = socket })
+    end
+    local function snapshotTick()
+      return mod.liveObserver and mod.liveObserver.tick or mod.observerTick
+    end
+    mod.edits["config.lua"] = 'return { role = "serve+play", cliSnapshots = true, port = 0 }'
+    mod.edits["authority/server.lua"] = "return { observe = bindObserver }"
+    mod.edits["dev/observer_status.lua"] = "error('CLI must own status.txt')"
+    mod.game.CurrentRun = {
+      Hero = { ObjectId = 99, Health = 30, MaxHealth = 30 },
+      CurrentRoom = { Name = "F_Combat01" },
+    }
+    mod.game.SessionState = { MapLoads = 1 }
+    mod.game.SessionMapState = { DeferredObstacleInitializationFinished = true }
+    mod.game.GetName = function() return "_PlayerUnit" end
+    mod.game.IsAlive = function() return true end
+    local game = readSource(root, "hack/game.lua"):gsub("return Game\n", [[
+      local step = Game.Step
+      Game.PushInput = function(self, seat, frame)
+        return captureInput(seat, frame)
+      end
+      function Game:Step(dt, tick)
+        self.compatibilityTick = tick
+        return step(self, dt, tick)
+      end
+      local read = Game.ReadActors
+      function Game:ReadActors()
+        captureObservedGame(self)
+        local sample = read(self)
+        sample.inputTick = self.compatibilityTick
+        sample.version = VERSION
+        return sample
+      end
+      return Game
+    ]])
+    mod.edits["hack/game.lua"] = game:gsub("VERSION", '"first"')
+
+    mod:reload()
+    local subscriber
+    if mod.liveObserver then
+      subscriber = assert(import("client/connection.lua").connect(socket, mod.liveObserver:port(), "Player"))
+    end
+    local function receive(tick, hp, expectedError)
+      if not subscriber then
+        return
+      end
+      local rejection
+      for _ = 1, 100 do
+        for _, item in ipairs(assert(subscriber:poll())) do
+          if item.kind == "error" then
+            rejection = item.msg.reason
+          end
+        end
+        if subscriber.tick == tick and rejection == expectedError then
+          eq(subscriber.snapshot.heroes[1].hp, hp)
+          return
+        end
+        socket.sleep(0.005)
+      end
+      error("subscriber did not receive the expected snapshot or error")
+    end
+    mod.maps[1]({ name = "F_Combat01" })
+    mod:queue("player add Guest\n")
+    local status = mod:poll(0)
+    assert(status:find("control=polling", 1, true), status)
+    assert(status:find("OK joined 2 Guest", 1, true), status)
+    assert(not status:find("control=observer", 1, true), status)
+    local instance = assert(mod.observedGame)
+    eq(mod.observed.inputTick, 1)
+    eq(mod.observed.heroes[1].id, 99)
+    eq(instance.session.slots[1].name, "Player")
+    eq(instance.session.slots[2].name, "Guest")
+    eq(instance.session.slots[3], nil)
+    receive(1, 30)
+    if subscriber then
+      assert(subscriber:sendInput({ moveX = 1, buttons = 1 }))
+    end
+
+    mod:queue("player add Another\ninput 1 0.5 0 Attack2\n")
+    status = mod:poll(0.01)
+    assert(status:find("OK joined 3 Another", 1, true), status)
+    eq(mod.polls, 2)
+    eq(snapshotTick(), 1)
+    eq(#mod.inputs, 1)
+    eq(mod.inputs[1].seat, 1)
+    eq(mod.inputs[1].frame.tick, 2)
+    eq(mod.inputs[1].frame.moveX, 0.5)
+    eq(mod.inputs[1].frame.buttons, 2)
+
+    mod.observerFailure = "fixture reader failed"
+    mod:poll(0.06)
+    mod:poll(0.12)
+    eq(mod.polls, 4)
+    eq(snapshotTick(), 1)
+    eq(#mod.warnings, 1)
+    assert(mod.warnings[1]:find("snapshot sync failed: fixture reader failed", 1, true))
+    mod.observerFailure = nil
+
+    mod.edits["hack/game.lua"] = game:gsub("VERSION", '"second"')
+    mod:reload()
+    mod:reload()
+    eq(#mod.frames, 1)
+    eq(#mod.maps, 1)
+    eq(mod.observerStarts, 1)
+    eq(mod.observed.version, "first")
+    mod.game.CurrentRun.Hero.Health = 24
+    status = mod:poll(0.18)
+    eq(mod.observedGame, instance)
+    eq(snapshotTick(), 2)
+    eq(mod.observed.version, "second")
+    eq(mod.observed.inputTick, 5)
+    eq(mod.observed.heroes[1].hp, 24)
+    eq(instance.session.slots[3].name, "Another")
+    assert(status:find("control=polling", 1, true), status)
+    eq(#mod.inputs, 1)
+    receive(2, 24, "observer connection is read-only")
+    if subscriber then
+      subscriber:close()
+      mod.liveObserver:close()
+    end
   end)
 
   test("observer status formats only the fields supplied by the authoritative snapshot", function()

@@ -5,7 +5,8 @@ return {
   -- play: this process only sends input and presents snapshots.
   role = "serve+play",
   port = 27778,
-  observerSnapshots = false, -- Publish read-only game state on the local TCP port.
+  observerSnapshots = false, -- Run only the read-only observer.
+  cliSnapshots = false, -- Publish read-only snapshots alongside the authority CLI.
   playerName = "Player",
   maxPlayers = 4,
   hpPerExtraPlayer = 0.75,
