@@ -18,4 +18,10 @@ cmake --build ../h2t-input-loader/build --target Hell2Modding
 
 同房执行 `player remove Guest` 仅撤销该连接的样本；原版继续更新同一角色。再次执行 `player add Guest` 后，新的连接须通过自己的原版中立批次。房间释放会先撤槽并保留私有存储，直到对应的原版 UnitManager::Remove 返回、各索引确认空缺，再清理哈希、震动引用和分配。handler 由原版 PlayerManager 持有，可供下一房间复用。
 
+### 原版 Player 和 handler 槽位
+
+Steam v1.143476 的 `PlayerManager::Instance` 将 Player 向量初始化为两个空指针（`manager+0x18`，RVA `0x5893E/0x5895B`），将 handler 向量初始化为五个空指针（`manager+0x00`，RVA `0x58960/0x58968`）。`Reset` 为未分配控制器的编号 4 准备 handler。`AssignController` 按编号分配 handler，`AddPlayer` 却固定写入 Player 下标 0（RVA `0x1CC9C4`）。第二席由本加载器发布到已有的 Player 下标 1。名册可容纳四席，当前正式加载器只为前两席发布真实角色。
+
+`PlayerManager::HandleInput` 按 Player 向量的实际长度遍历，从每个 Player 的分配编号取 handler，再调用原版 `Player::HandleInput`（RVA `0x1CCF10–0x1CCF4D`）。`PlayerManager::Update` 也按该向量的实际长度遍历。三、四席的候选路径是在原线程、任何 owner 缓存槽表地址之前，用引擎自己的向量扩容操作一次建立四个 Player 元素。需先验证其他消费者对玩家编号和表地址的假设，再将发布、回收、各手柄采样和快照按席位复用。当前两席实现尚未验证扩容后的引擎行为。
+
 同源加载器在既有实机记录 `5EqRkTn7If1y` 中取得一席 X 轴 0.8、正向位移 9、显式归零后速度 0，以及原版 Attack2 按下和武器事件。该次记录未捕获攻击释放边沿。后续聚焦测试使用带观测的加载器独立记录了显式零对应的原版释放；本目录只包含提交输入所需的源码。正常入口及回执见[玩家输入](../../docs/input.md)。
