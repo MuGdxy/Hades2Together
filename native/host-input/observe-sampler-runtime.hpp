@@ -1,5 +1,6 @@
 #pragma once
 #include "observe-sampler-candidate.hpp"
+#include "player-slots.hpp"
 #include <bcrypt.h>
 #include <filesystem>
 #include <fstream>
@@ -96,24 +97,13 @@ struct Sdl {
     }
 };
 inline Sdl sdl;
-struct Owner {
-    Addr world{}, player{}, unit{}, handler{};
-    bool operator==(const Owner&) const = default;
-};
+using h2t_players::Owner;
 inline std::optional<Owner> stock_owner(int id) noexcept {
-    const auto manager=read<Addr>(game_base+0x831dc0).value_or(0);
-    const auto world=read<Addr>(game_base+0x4dcc1b0).value_or(0);
-    if (!manager || !world || id <= 0) return {};
-    const auto players=read<Addr>(manager+0x18).value_or(0);
-    const auto handlers=read<Addr>(manager).value_or(0);
-    if (!players || !handlers || read<Addr>(manager+0x20) != players+2*sizeof(Addr) ||
-        read<Addr>(manager+8) != handlers+5*sizeof(Addr) || read<Addr>(players+sizeof(Addr)) != Addr{0}) return {};
-    const auto player=read<Addr>(players).value_or(0);
-    const auto handler=read<Addr>(handlers).value_or(0);
-    if (!player || !handler || read<std::uint8_t>(player+3)!=0 || read<std::uint8_t>(handler+0x0c)!=0) return {};
-    const auto unit=read<Addr>(player+0x18).value_or(0);
-    if (!unit || read<int>(unit+0x48)!=id) return {};
-    return Owner{world,player,unit,handler};
+    const auto slots = h2t_players::Slots::current();
+    if (!slots) return {};
+    const auto owner = slots->primary(id);
+    if (!owner || !h2t_players::secondary.accepts(*slots, *owner)) return {};
+    return owner;
 }
 struct PadVector { Addr begin{}; unsigned count{}; };
 inline std::optional<PadVector> stock_vector() noexcept {
