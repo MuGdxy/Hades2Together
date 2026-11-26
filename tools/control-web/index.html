@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hades2Together 本机控制</title>
+  <link rel="stylesheet" href="/control.css">
+  <script src="/control.js" defer></script>
+</head>
+<body>
+  <header>
+    <div class="frame heading">
+      <h1>Hades2Together <small>本机控制</small></h1>
+      <nav aria-label="状态来源">
+        <button type="button" id="showLive" aria-pressed="true">实时</button>
+        <button type="button" id="showHistory" aria-pressed="false">运行记录</button>
+      </nav>
+    </div>
+  </header>
+  <main class="frame">
+    <section id="live">
+      <div class="summary">
+        <div><span>当前模式</span><strong id="mode">等待读取</strong></div>
+        <div><span>房间</span><strong id="room">—</strong></div>
+        <div><span>状态文件最后更新</span><strong id="updated">—</strong></div>
+      </div>
+      <p id="connection" hidden></p>
+      <p id="liveError" role="status" hidden></p>
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>玩家</h2>
+          <form id="join" hidden>
+            <label for="name">玩家名</label>
+            <input id="name" placeholder="留空使用自动名称">
+            <button type="submit">加入 / 重连</button>
+          </form>
+        </div>
+        <div id="players" class="players"><p>等待游戏发布状态。</p></div>
+        <form id="input" class="input" hidden>
+          <label>席位 <input id="seat" inputmode="numeric" pattern="[1-9][0-9]*" value="1" required></label>
+          <label>X 轴 <input id="axisX" type="number" min="-1" max="1" step="any" value="0" required></label>
+          <label>Y 轴 <input id="axisY" type="number" min="-1" max="1" step="any" value="0" required></label>
+          <label class="check"><input type="checkbox" value="Attack1"> Attack1</label>
+          <label class="check"><input type="checkbox" value="Attack2"> Attack2</label>
+          <button type="submit">提交输入</button>
+          <button type="button" class="quiet" id="zero">发送显式零</button>
+        </form>
+        <form id="gameCommands" class="input" hidden>
+          <label for="map">地图</label>
+          <input id="map" value="F_Combat01" pattern="[A-Za-z0-9_]+" required>
+          <button type="submit">请求进房</button>
+          <button type="button" class="quiet" id="play">执行输入脚本</button>
+        </form>
+      </section>
+      <div class="columns">
+        <section class="panel">
+          <h2>本页命令</h2>
+          <p>排队确认只表示命令已写入队列。游戏回执和最近应用序号另行显示。</p>
+          <ul id="commands" aria-live="polite"><li>本页尚未提交命令</li></ul>
+        </section>
+        <section class="panel">
+          <h2>游戏回执</h2>
+          <pre id="receipts">—</pre>
+        </section>
+      </div>
+      <details class="panel">
+        <summary>最新原始状态与本页最近读数</summary>
+        <pre id="raw">等待读取…</pre>
+        <div id="recent"></div>
+      </details>
+    </section>
+    <section id="history" hidden>
+      <div class="panel-heading">
+        <h2>历史运行归档</h2>
+        <button type="button" class="quiet" id="reloadHistory">刷新列表</button>
+      </div>
+      <div class="history">
+        <aside class="panel" aria-label="运行归档"><div id="runs"></div></aside>
+        <section class="panel">
+          <h3 id="recordName">选择一条运行记录</h3>
+          <div id="recordFiles" class="files"></div>
+          <pre id="record" tabindex="0">归档来自本机文件，游戏关闭时也可查看。</pre>
+        </section>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
