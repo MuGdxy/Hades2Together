@@ -19,6 +19,13 @@ $ship = New-Item -ItemType Directory "$root/Ship"
 Get-ChildItem "$source/Ship" -File | Copy-Item -Destination $ship.FullName
 Copy-Item -LiteralPath $PlayerLoader -Destination "$ship/d3d12.dll" -Force
 $plugins = New-Item -ItemType Directory "$ship/ReturnOfModding/plugins" -Force
+# The validated source stage has already dismissed the loader's first-run UI.
+# Carry only its GUI preferences into the otherwise clean authority package.
+$guiConfig = 'ReturnOfModding/config/Hell2Modding-Hell2Modding-GUI.cfg'
+if (Test-Path -LiteralPath "$source/Ship/$guiConfig" -PathType Leaf) {
+    $null = New-Item -ItemType Directory "$ship/ReturnOfModding/config" -Force
+    Copy-Item -LiteralPath "$source/Ship/$guiConfig" -Destination "$ship/$guiConfig"
+}
 foreach ($name in 'Hell2Modding-GLOBAL','LuaENVY-ENVY') {
     Copy-Item "$source/Ship/ReturnOfModding/plugins/$name" -Destination $plugins.FullName -Recurse
 }
