@@ -479,7 +479,16 @@ do
   local wrapped = game.AddTraitData
   capture:Install()
   assert(game.AddTraitData == wrapped)
+  local oldMeta = getmetatable(capture)
+  local reloadCalls = 0
+  local updated = setmetatable({ ObserveTraitGrant = function(...)
+    reloadCalls = reloadCalls + 1
+    return oldMeta.__index.ObserveTraitGrant(...)
+  end }, oldMeta)
+  setmetatable(capture, { __index = updated })
   game.AddTraitData(hero, data, args)
+  assert(reloadCalls == 1 and game.AddTraitData == wrapped)
+  setmetatable(capture, oldMeta)
   assert(capture:RoomRewards() == nil) -- screen open and return without a committed instance
   insert = true
   game.AddTraitData({ ObjectId = 123, Traits = {} }, data, args)

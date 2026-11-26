@@ -54,21 +54,16 @@ local function committed(game, g, pending, unit, result)
   end
 end
 
-function Boon.observe(game, g)
-  local original = g.AddTraitData
-  if type(original) ~= "function" then return end
-  g.AddTraitData = function(...)
-    local unit, data, args = ...
-    if not args or args.FromLoot ~= true or args.PreProcessedForDisplay ~= true then
-      return original(...)
-    end
-    local ok, pending = pcall(selected, game, g, unit, data, args)
-    if not ok or not pending then return original(...) end
-    local results = table.pack(original(...))
-    pcall(committed, game, g, pending, unit, results[1])
-    return table.unpack(results, 1, results.n)
+function Boon.onGrant(game, g, original, ...)
+  local unit, data, args = ...
+  if type(args) ~= "table" or args.FromLoot ~= true or args.PreProcessedForDisplay ~= true then
+    return original(...)
   end
-  return true
+  local ok, pending = pcall(selected, game, g, unit, data, args)
+  if not ok or not pending then return original(...) end
+  local results = table.pack(original(...))
+  pcall(committed, game, g, pending, unit, results[1])
+  return table.unpack(results, 1, results.n)
 end
 
 return Boon

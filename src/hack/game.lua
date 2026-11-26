@@ -11,6 +11,7 @@ local Messages = import("protocol/messages.lua")
 local Session = import("protocol/session.lua")
 
 local Game = { hostSeat = 1 } -- Default for instances retained across plugin reload.
+Game.ObserveTraitGrant = Boon.onGrant
 
 function Game.new(session, hostSeat)
   return setmetatable({
@@ -681,7 +682,13 @@ end
 
 function Game:Install()
   if self.session and Session.isAuthority(self.session) and not self.boonObserver then
-    self.boonObserver = Boon.observe(self, rom.game)
+    local g = rom.game
+    local original = g.AddTraitData
+    if type(original) == "function" then
+      -- Reload replaces this instance's methods while the stock callback stays installed.
+      g.AddTraitData = function(...) return self:ObserveTraitGrant(g, original, ...) end
+      self.boonObserver = true
+    end
   end
   if self.installed then
     return
