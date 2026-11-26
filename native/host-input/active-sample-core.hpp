@@ -108,6 +108,8 @@ public:
     bool disconnect(unsigned t, std::uint64_t gen) noexcept {
         if (!on(t) || opened_ || !gen || gen!=generation_) return false;
         invalidate();
+        received_=0;
+        latest_={};
         return true;
     }
     bool submit(unsigned t, std::uint64_t gen, std::uint64_t seq, ClockMs now,

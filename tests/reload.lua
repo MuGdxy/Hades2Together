@@ -422,7 +422,7 @@ return function(root, test, eq)
     eq(playback.buttons, 0)
   end)
 
-  test("host sampler binds neutral, submits canonical frames and revokes on disconnect", function()
+  test("host sampler isolates reconnects across and within a CLI pump", function()
     local mod = mockLoader(root)
     mod.game.CurrentRun = { CurrentRoom = { Name = "Room" }, Hero = { ObjectId = 91 } }
     mod.game.SessionState = { MapLoads = 7 }
@@ -442,7 +442,9 @@ return function(root, test, eq)
       h2t_active_bind = function(id, epoch)
         eq(id, 91) eq(epoch, 7) return record("bind", true)()
       end,
-      h2t_active_connect = record("connect", true), h2t_active_clear = record("clear", true),
+      h2t_active_connect = function(token) return record("connect" .. token, true)() end,
+      h2t_active_clear = function(token) return record("clear" .. token, true)() end,
+      h2t_active_disconnect = function(token) return record("disconnect" .. token, true)() end,
       h2t_active_audit = function() return { batch = 3, valid = true, complete = true, sequence = 0 } end,
       h2t_active_revoke = record("revoke", true),
       h2t_active_submit = function(...)
@@ -462,15 +464,32 @@ return function(root, test, eq)
     assert(report:find("OK input 1", 1, true))
     assert(report:find("seat 2 has no native player input slot", 1, true))
     assert(report:find("ERR input unsupported host sampler supports", 1, true))
-    for i, value in ipairs({7, 2, 0.8, 0, 0, 0, 2}) do eq(submitted[1][i], value) end
+    for i, value in ipairs({1, 2, 0.8, 0, 0, 0, 2}) do eq(submitted[1][i], value) end
     mod.game.IsInputAllowed = function() return false end
     mod:queue("input 1 0 0\nplayer remove 1\nplayer add Other\ninput 1 1 0\n")
     local offline = mod:poll(0.06)
     assert(offline:find("OK offline 1 Player\nOK joined 3 Other\nERR input seat 1 is disconnected", 1, true), offline)
-    assert(mod:poll(0.08):find("hostInput=host owner changed", 1, true))
-    for i, value in ipairs({7, 4, 0, 0, 0, 0, 0}) do eq(submitted[2][i], value) end
+    assert(mod:poll(0.08):find("hostInput=offline", 1, true))
+    for i, value in ipairs({1, 4, 0, 0, 0, 0, 0}) do eq(submitted[2][i], value) end
     eq(#submitted, 2)
-    eq(table.concat(calls, ","), "install,arm,bind,connect,clear,revoke")
+    mod.game.IsInputAllowed = function() return true end
+    mod:queue("player add Player\ninput 1 1 0\n")
+    assert(mod:poll(0.10):find("waiting for neutral batch", 1, true))
+    eq(#submitted, 2)
+    mod:queue("input 1 0.4 0 Attack1\n")
+    mod:poll(0.12)
+    eq(submitted[3][1], 2)
+    mod:queue("player remove 1\nplayer add Player\ninput 1 -1 0\n")
+    assert(mod:poll(0.14):find("waiting for neutral batch", 1, true))
+    eq(#submitted, 3)
+    mod:queue("input 1 -1 0\n")
+    mod:poll(0.16)
+    eq(submitted[4][1], 3)
+    eq(submitted[4][3], -1)
+    mod.game.CurrentRun.Hero = { ObjectId = 92 }
+    assert(mod:poll(0.18):find("host owner changed", 1, true))
+    eq(table.concat(calls, ","), "install,arm,bind,connect1,clear1,disconnect1," ..
+      "connect2,clear2,disconnect2,connect3,clear3,revoke")
   end)
 
   test("live CLI playback refuses unsupported seats without spawning or moving actors", function()
