@@ -14,6 +14,7 @@ function Host.revoke(game, reason)
     state.failure = reason
     state.applied = nil
     if state.bound and not state.native.h2t_active_revoke(state.load) then
+      state.revokePending = reason
       state.failure = reason .. " (native revoke unconfirmed)"
     end
   end
@@ -66,8 +67,12 @@ end
 function Host.update(game, native)
   local state = game.hostInput
   if state and state.failure and native and native.h2t_sampler_resume then
+    if state.revokePending then
+      if not state.native.h2t_active_revoke(state.load) then return end
+      state.failure, state.revokePending = state.revokePending, nil
+    end
     local slot, room, hero, load = game:InputOwner()
-    if slot and (load ~= state.load or room ~= state.room or hero ~= state.hero) then
+    if slot and game:LoadedRoom(room) and (load ~= state.load or room ~= state.room or hero ~= state.hero) then
       game.hostLastToken = state.lastToken or game.hostLastToken
       game.hostInput, state = nil, nil
     end

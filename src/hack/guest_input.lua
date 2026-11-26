@@ -35,6 +35,7 @@ function Guest.update(game, native)
   if state and (state.session ~= game.session or not slot or slot ~= state.slot or load ~= state.load or room ~= state.room or hero ~= state.hero) then
     local result = native.h2t_guest_owner(0, state.load, 0, false, 0)
     state.ready, state.sequence, state.id = false, nil, nil
+    state.actor, state.token, state.offlineBatch = nil, nil, nil
     state.reason = result.status or "retirement pending"
     if result.epoch == 0 then game.guestInput = nil end
     return
@@ -45,9 +46,8 @@ function Guest.update(game, native)
     game.guestInput = state
   end
   local point
-  if not state.sawOwner and game.roomLoad and game.roomLoad.room == room and game.roomLoad.generation == load
-      and game.roomLoad.mapState.DeferredObstacleInitializationFinished == true and game.hostInput
-      and game.hostInput.bound and not game.hostInput.failure then
+  if not state.sawOwner and game:LoadedRoom(room) and game.hostInput
+      and game.hostInput.load == load and game.hostInput.bound and not game.hostInput.failure then
     if not game.guestResource then
       native.register_file_redirect("Maps/bin/H2TGuest.thing_bin", _PLUGIN.plugins_mod_folder_path .. "/hack/H2TGuest.bin")
       game.guestResource = true

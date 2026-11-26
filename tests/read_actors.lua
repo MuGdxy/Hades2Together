@@ -156,7 +156,94 @@ do
   assert(send() and controller:BindHero(2) == 900)
   hero.IsDead = nil
   assert(table.concat(calls, ",") == "+1,-1,+2,-2,+3")
-  environment.rom.data, game.SessionState = nil, nil
+
+  -- A normal LeaveRoom changes CurrentRoom before OnPreThingCreation increments
+  -- MapLoads. The engine can issue the same numeric ObjectId in the next World.
+  local native = environment.rom.data
+  local slot = session.slots[2]
+  Session.release(session, 2)
+  Guest.check(controller)
+  local generation, oldRoom, oldActor = slot.connectionGeneration, game.CurrentRun.CurrentRoom, actor
+  local oldHost = controller.hostInput
+  local closed, reclaimed, published = false, false, false
+  oldHost.native.h2t_active_revoke = function(load) assert(load == 7) return closed end
+  native.h2t_guest_owner = function(id, load, point, retain)
+    if not retain then
+      assert(load == 7 and not published)
+      return { epoch = reclaimed and 0 or 7, status = reclaimed and "empty" or "retiring" }
+    end
+    if point ~= 0 then
+      assert(reclaimed and load == 8 and point == 77 and controller.hostInput.bound)
+      published = true
+    end
+    if published then return { epoch=8, id=900, publication=13, inputBound=true } end
+    return { epoch=0, status="empty" }
+  end
+  native.h2t_guest_actor = function()
+    if not reclaimed then return { load=7, id=900, actor=oldActor } end
+    if published then return { load=8, id=900, actor=actor, empty=actor == nil } end
+    return {}
+  end
+  native.h2t_sampler_install = function() assert(closed and game.SessionState.MapLoads == 8) return "ready" end
+  native.h2t_sampler_observe = function()
+    return { outcome="complete", owner_same=true, stock_same=true, direct_neutral=true, sample_neutral=true, handler_neutral=true }
+  end
+  native.h2t_sampler_arm = function() error("existing pads should be reused") end
+  native.h2t_sampler_resume = function() return true end
+  native.h2t_active_bind = function(id, load) assert(id == hero.ObjectId and load == 8) return true end
+  native.h2t_active_connect = function() return true end
+  native.h2t_active_clear = function() return true end
+  native.h2t_active_audit = function() return { valid=true, complete=true, batch=1 } end
+  native.h2t_active_revoke = oldHost.native.h2t_active_revoke
+  controller.guestResource = true -- registered when the first room owner was created
+  controller.GuestSpawnPoint = function() return 77 end
+  game.SessionMapState = { DeferredObstacleInitializationFinished=true }
+  controller:OnMap(oldRoom.Name)
+  oldActor.Health, oldActor.MaxHealth = 21, 30
+  names[900], alive[900] = "_PlayerUnit", true
+  assert(controller:ReadActors().heroes[2].hp == 21)
+  game.CurrentRun.CurrentRoom = { Name=oldRoom.Name }
+  assert(not controller:BindHero(2) and not controller:ReadActors().heroes[2])
+  controller:UpdateInputOwner()
+  assert(oldHost.revokePending and controller.guestInput.reason == "retiring")
+  closed = true
+  controller:UpdateInputOwner()
+  assert(controller.hostInput == oldHost and not oldHost.revokePending)
+  game.SessionState.MapLoads = 8
+  game.SessionMapState = {}
+  controller:OnMap(oldRoom.Name)
+  controller:UpdateInputOwner()
+  assert(controller.hostInput == oldHost and not published)
+  reclaimed, actor = true, nil
+  controller:UpdateInputOwner()
+  assert(controller.guestInput == nil)
+  game.SessionMapState.DeferredObstacleInitializationFinished = true
+  controller:UpdateInputOwner()
+  controller:UpdateInputOwner()
+  assert(published and actor ~= oldActor and controller:BindHero(2) == 900)
+  actor.Health, actor.MaxHealth = 30, 30
+  assert(controller:ReadActors().heroes[2].hp == 30)
+  assert(controller:BodyReport():find("load=8 publication=13", 1, true))
+  assert(session.slots[2] == slot and not slot.connected and slot.connectionGeneration == generation)
+  assert(controller.guestInput.reason == "offline" and not send())
+  native.h2t_guest_connection = function(load, pub, token, online)
+    assert(load == 8 and pub == 13 and token == generation + 1 and online)
+    return true
+  end
+  native.h2t_guest_submit = function(load, pub, token)
+    assert(load == 8 and pub == 13 and token == slot.connectionGeneration)
+    return true
+  end
+  Session.join(session, "guest")
+  clear = false
+  update()
+  assert(not send())
+  clear = true
+  update()
+  assert(send())
+  game.CurrentRun.CurrentRoom = oldRoom
+  names[900], alive[900] = nil, nil
+  environment.rom.data, game.SessionState, game.SessionMapState = nil, nil, nil
 end
 
 local encoded = Codec.encode(Messages.snapshot(1, first.heroes, first.enemies))

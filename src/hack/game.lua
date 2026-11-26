@@ -57,6 +57,9 @@ function Game:BindHero(playerId)
   if playerId == 1 then
     return self:HeroId()
   elseif playerId == 2 and self.guestInput and self.guestInput.actor and rom.data and rom.data.h2t_guest_actor then
+    local run = rom.game.CurrentRun
+    if not run or run.CurrentRoom ~= self.guestInput.room or run.Hero ~= self.guestInput.hero
+        or not rom.game.SessionState or rom.game.SessionState.MapLoads ~= self.guestInput.load then return end
     local bound = rom.data.h2t_guest_actor()
     if bound.id == self.guestInput.id and bound.actor == self.guestInput.actor and bound.load == self.guestInput.load then
       return bound.id
@@ -141,15 +144,22 @@ local function readAnchoredReward(game, room, encounter)
   end
 end
 
-local function readRoom(self, game, room)
+function Game:LoadedRoom(room)
+  local game = rom.game
   local load = self.roomLoad
   local mapState = game.SessionMapState
   -- LeaveRoom can assign the next room before the old map stops updating.
-  if not load or load.room ~= room or load.name ~= room.Name
+  if not room or not load or load.room ~= room or load.name ~= room.Name
     or type(game.SessionState) ~= "table" or load.generation ~= game.SessionState.MapLoads
-    or load.mapState ~= mapState or mapState.DeferredObstacleInitializationFinished ~= true then
+    or type(mapState) ~= "table" or load.mapState ~= mapState or mapState.DeferredObstacleInitializationFinished ~= true then
     return nil
   end
+  return load
+end
+
+local function readRoom(self, game, room)
+  local load = self:LoadedRoom(room)
+  if not load then return nil end
   if not load.id then
     self.roomSerial = (self.roomSerial or 0) + 1
     load.id = self.roomSerial
@@ -229,7 +239,8 @@ function Game:ReadActors()
   end
 
   local native = rom.data
-  if native and native.h2t_guest_actor then
+  if native and native.h2t_guest_actor and (not self.guestInput or
+      (self.guestInput.room == run.CurrentRoom and self.guestInput.hero == run.Hero)) then
     local guest = native.h2t_guest_actor()
     if guest.actor and guest.actor.ObjectId == guest.id and game.SessionState
         and guest.load == game.SessionState.MapLoads then
@@ -522,7 +533,8 @@ function Game:BodyReport()
       local position = guest.id and (" id=" .. guest.id .. positionText(self, guest.id)) or ""
       local receipt = guest.sequence and (" appliedSeq=" .. guest.sequence) or ""
       local idle = not slot.connected and guest.offlineBatch and (" offlineBatch=" .. guest.offlineBatch) or ""
-      parts[#parts + 1] = playerId .. ":" .. slot.name .. ":" .. (guest.reason or "pending") .. position .. receipt .. idle
+      local binding = guest.id and (" load=" .. guest.load .. " publication=" .. guest.publication) or ""
+      parts[#parts + 1] = playerId .. ":" .. slot.name .. ":" .. (guest.reason or "pending") .. position .. receipt .. idle .. binding
     elseif slot and slot.connected then
       local pending = playerId == 2 and rom.data and rom.data.h2t_guest_owner
       parts[#parts + 1] = playerId .. ":" .. slot.name .. (pending and ":awaiting room owner" or ":unsupported")
