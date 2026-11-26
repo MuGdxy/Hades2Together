@@ -90,6 +90,85 @@ local function choiceScreen(g, source)
     and screen.Source == source and g.CurrentLootData == source then return screen end
 end
 
+-- A remote click addresses the same component and waiting stock coroutine as
+-- local screen input. Snapshot tokens expire across rerolls and reconnects.
+function Stock.hostMenu(game, g, offer, verifyIssued)
+  local reward = offer.reward
+  local slot = game.session.slots[game.hostSeat]
+  local entry = reward.seats and reward.seats[game.hostSeat]
+  local screen = choiceScreen(g, offer.source)
+  local hero = g.CurrentRun.Hero
+  local previous = offer.menu
+  offer.menu = nil
+  if not screen or not screen.KeepOpen or screen.ChoiceMade or not slot or not slot.connected
+    or not entry or entry.slot ~= slot or not entry.options or entry.consumed or not hero or hero.IsDead
+    or hero.ObjectId ~= entry.actor or not g.HasWaitUntil("ScreenInput" .. screen.Name)
+    or not g.IsInputAllowed({}) then return end
+  for _, other in pairs(g.ActiveScreens) do
+    if other ~= screen and other.IgnoreOtherScreenInput then return end
+  end
+  local generation = slot.connectionGeneration or 1
+  local offered = {}
+  for _, name in ipairs(entry.options) do offered[name] = not entry.selected or entry.selected == name end
+  for _, trait in pairs(hero.Traits or {}) do if trait.Name then offered[trait.Name] = nil end end
+  local buttons, same = {}, previous and previous.screen == screen and previous.generation == generation
+    and previous.items == offer.source.UpgradeOptions and previous.slot == slot and previous.hero == hero
+  for _, button in ipairs(screen.UpgradeButtons or {}) do
+    local data = button.Data
+    local item = offer.source.UpgradeOptions[button.Index]
+    if data and offered[data.Name] and item and button.Id and item.ItemName == data.Name and not item.Blocked
+      and not item.TraitToReplace and not data.TraitToReplace and (not item.Rarity or data.Rarity == item.Rarity)
+      and button.Type == "Trait" and button.Screen == screen
+      and button.LootData == offer.source and button.OnPressedFunctionName == "HandleUpgradeChoiceSelection"
+      and g.GetComponentById(screen.Components, button.Id) == button and g.IsUseable({ Id = button.Id }) then
+      if buttons[data.Name] then return end
+      buttons[data.Name] = { button = button, data = data, id = button.Id, rarity = data.Rarity }
+      local old = same and previous.buttons[data.Name]
+      same = old and old.button == button and old.data == data and old.id == button.Id and old.rarity == data.Rarity
+    end
+  end
+  if not next(buttons) then return end
+  if same then
+    for name in pairs(previous.buttons) do if not buttons[name] then same = false end end
+  end
+  if not same then
+    if verifyIssued then return end
+    offer.menuRound = (offer.menuRound or 0) + 1
+  end
+  offer.menu = { screen = screen, items = offer.source.UpgradeOptions, buttons = buttons,
+    round = offer.menuRound, generation = generation, slot = slot, hero = hero }
+  return offer.menu
+end
+
+function Stock.chooseHost(game, seat, room, rewardId, round, name)
+  local g = rom.game
+  local run = g.CurrentRun
+  local load = run and game:LoadedRoom(run.CurrentRoom)
+  local offer = load and load.id == room and Stock.current(g, load)
+  if not Session.isAuthority(game.session) or seat ~= game.hostSeat or not offer or offer.id ~= rewardId
+    or not offer.reward then return nil, "stale host opportunity" end
+  local issued, slot = offer.menu, game.session.slots[seat]
+  if not issued or issued.round ~= round or issued.slot ~= slot or not slot.connected
+    or issued.generation ~= (slot.connectionGeneration or 1) or not issued.buttons[name] then
+    return nil, "host option was not offered to this connection"
+  end
+  local _, current = Stock.readOptions(game, g, load, offer.reward)
+  if current ~= offer then return nil, "host offer unavailable" end
+  local menu = Stock.hostMenu(game, g, offer, true)
+  local row = menu and menu.round == round and menu.buttons[name]
+  if not row then return nil, "stock option no longer available" end
+  local event = "ScreenInput" .. menu.screen.Name
+  -- GiftLogic and CloseUpgradeChoiceScreen deliver stock Lua menu events by
+  -- writing the event payload and waking its current waiter. Here the payload
+  -- is an actual component ID; HandleScreenInput does its normal checks.
+  g.CancelNotify({ Name = event })
+  g.NotifyResultsTable[event] = row.id
+  g.notifyExistingWaiters(event)
+  local entry = offer.reward.seats[seat]
+  if entry.consumed == name then return entry.instanceId end
+  return nil, "stock selection dispatched; grant not confirmed"
+end
+
 local function generatedOptions(g, offer)
   local source = offer.source
   local items = source.UpgradeOptions

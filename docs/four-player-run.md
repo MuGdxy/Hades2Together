@@ -1,46 +1,31 @@
 # 四人在同一权威房间战斗与领取
 
-验收需要四条同时在线的玩家连接。权威配置为 `serve`，名册初始为空；四个 `play` 各自握手，取得一个稳定席号，用本机方向键位、Attack2 和松键驱动权威游戏。第一个获配席 1 的玩家控制原版英雄，并由本人在权威窗口完成原版奖励选择。另三席各自从其玩家连接领取。控制页供观察。
+一个 `serve` 游戏提供原版世界、角色、菜单和游戏窗口。四个独立 CLI 玩家各自向 TCP 27780 握手，从 welcome 取得稳定席号。首席控制原版英雄，其余三席控制各自绑定的 Unit。四个 CLI 可在同一台机器运行，每个只需要 texlua、LuaSocket 和到权威的 TCP 连接。游戏内操作方式仍可使用 `guest.ps1` 与本地英雄；只读订阅使用 27778，不占玩家席位。
 
 ## 准备
 
-TCP 支持单机多进程。这里选用四个独立的人工输入环境，因为正式 `play` 入口 `Game:ReadLocalInput` 从有本地英雄的游戏实例读取 `IsControlDown`。每位玩家需要自己的输入源、可同时运行的授权游戏环境、同版 Hell2Modding/ENVY 和到权威地址的 TCP 27780 连通性。四个客户端可各用一台机器；协议没有机器数限制。若多实例共机，还需各自可操作的游戏、插件目录、profile 与独立输入焦点。同一桌面的四个窗口共用键鼠不能提供四路独立操作。四人可共看权威屏幕，异地可共享该窗口。
-
-另有一个权威游戏进程。它沿用已验证的 Windows 零售游戏、Hell2Modding 1.0.125、LuaENVY 1.2.1 和 `8A85AB29…` 加载器。权威进程启动时保持实体手柄断开，让原版识别固定虚拟通道；采集依赖现有 texlua/LuaSocket、空闲 GPU 和已验证的 Windows 游戏窗口 FFmpeg 工具。四个玩家客户端使用普通加载器。
-
-在仓库根目录准备全新隔离目录。将地址换成访客可达的权威机 IPv4。
+在仓库根目录准备全新的隔离目录。同机用回环地址，分机时使用玩家可达的权威 IPv4。
 
 ```powershell
 $party = Join-Path $env:AGENT_SERVER_TMP 'h2t-party-session'
-./tools/party/prepare.ps1 -SourceStage "$env:AGENT_SERVER_TMP/h2t-14aea73-guest-staff-live" -Out $party -Address 10.30.59.176 -CaptureHelper "$env:AGENT_SERVER_TMP/seat-owner/same-brawler-align/capture-secondary-scene.ps1"
+./tools/party/prepare.ps1 -SourceStage "$env:AGENT_SERVER_TMP/h2t-14aea73-guest-staff-live" -Out $party -Address 127.0.0.1 -PlayerLoader "$env:AGENT_SERVER_TMP/player-cli-use-build/d3d12.dll" -CaptureHelper "$env:AGENT_SERVER_TMP/seat-owner/same-brawler-align/capture-secondary-scene.ps1"
 ```
 
-准备器写入五份插件配置。在私有 `F_Combat02` 房间定义中指定普通波塞冬掉落。原版遭遇负责生成敌群、等待清场和调用 `SpawnRoomReward`。神祇是本次场景的已知条件，每人的选项和授予仍由各自的正式路径决定。
+权威机使用 Windows 零售版、Hell2Modding 1.0.125、LuaENVY 1.2.1 和支持首席 V1 `Use` 的加载器。准备器和运行器核对 DLL 哈希。启动时保持实体手柄断开，让原版识别固定虚拟通道。采集使用现有精确窗口 FFmpeg 工具。在私有 `F_Combat02` 定义中指定普通波塞冬掉落，原版遭遇生成敌群，清场后调用 `SpawnRoomReward`。每人的候选取自本席实际机会。
 
 ## 执行
 
-1. 将 `clients/PlayerA` 到 `clients/PlayerD` 分给四位玩家。在各自的独立游戏安装或隔离副本中，将分配到的 `MuGdxy-Hades2Together` 安装到 `Ship/ReturnOfModding/plugins/`。保留包内原文件，启动脚本会核对字节。获准实机后各自在包目录运行下面的命令。客户端进入有本地英雄的非战斗房，并自动连接。席号以实际 welcome 为准。
+1. 获准使用空闲 GPU 后，在权威机独立终端运行 `powershell -NoProfile -ExecutionPolicy Bypass -File "$party/host.ps1" -Run`。它启动禁存档游戏、只读快照订阅和录像终端。
+2. 权威开始监听后，在四个终端分别运行各包的玩家入口。下例为第一个终端，其余将 PlayerA 改成 PlayerB、PlayerC、PlayerD。玩家也可在各自机器运行收到的包。每个终端输出的 `joined` 行给出实际席位。`status` 显示本机 `seat`、`sentSeq` 及最新权威快照，角色和领取行均带席号。四个角色都应在奖励首次生成前绑定。
 
    ```powershell
-   ./guest.ps1 -Ship 'D:/Hades II/Ship' -ProfileDirectory 'D:/H2T/session01/guest-profile' -Run
+   powershell -NoProfile -ExecutionPolicy Bypass -File "$party/clients/PlayerA/player.ps1"
    ```
 
-2. 独占游戏名额就绪后，权威机在独立 PowerShell 进程执行下面的命令。同机部署时，先启动权威，再启动同机客户端。运行器检查 GPU、存档基线和 DLL，启动权威游戏窗口、只读 TCP 订阅和独立录像终端。各机用 Insert 打开加载器，查看 **My rewards** 中的席号。关闭面板回到本机游戏输入。核对四条真实连接与同房四个不同的英雄 ID。只读订阅使用另一个端口 27778。
+3. 每位玩家在自己的终端输入 `input <x> <y> [动作 ...]`。移动与攻击示例为 `input 0.8 0` 和 `input 0 0 Attack2`，松开为 `input 0 0`。每条是完整样本，原生租约上限 500 ms。按下和显式零分开发送，给原版采样留出时间。同一批次只会采用最新状态。`sent_input` 记录本连接已发送的序号。战斗结果核对权威同房的原版发射、弹体、OnHit、敌人 ID 和实际 HP。
+4. 清场后，首席通过移动靠近原版可交互掉落，输入 `input 0 0 Use`，看到原版交互后发 `input 0 0`。原版菜单等待输入时，`status` 才显示首席可以提交的按钮。每个玩家从自己席位的 `opportunity` 和 `grantOptions` 选一个，命令形如 `boon 1/1/1 PoseidonWeaponBoon`。实际机会和选项以快照为准。普通新增访客祝福支持 PoseidonWeaponBoon 和 PoseidonSpecialBoon。宿主请求交给原版菜单协程和授予函数。客户端显示 `sent_boon` 后，再用 `status` 核对本席 `state=consumed choice=...` 和实际持有。某席错过资格、没有可授予项或请求被拒时，保留该席的实际结果。 隔离运行器使用原版选项 `/AutoAdvanceNarration=true`，有台词时由 `AutoAdvanceNarration` 等语音结束并推进普通对白。叙事分支仍由原版处理。
+5. 每个玩家入口会打印自己的 `Player log` 路径，文件保留本席的发送记录和查询到的权威状态。四条权威领取回执入档后，录像终端按 **q** 完成 MP4，各玩家输入 `quit`，正常退出权威游戏。核对原视频、`stages.txt` 的发射及命中、`snapshots.tsv` 的实体及领取、`run-output.txt` 的退出码、视频哈希及存档。运行器退出码描述采集及退出。用 `./tools/publish-run.ps1 -RunDirectory $party` 发布历史文本，另交原始 MP4 和玩家记录。
 
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File "$party/host.ps1" -Run
-   ```
+## 接口验证
 
-3. 四位玩家都在自己的 play 客户端靠近同批原版敌人，按住并松开 Attack2。每条玩家连接的日志保留实际发送的按键变更序号。权威端按同房、席号和 Unit 记录原版发射的 projectile、OnHit 的 victim 及快照中的敌人血量。逐人的命中归属要能对上实际发射、命中事件和敌人 ID。
-
-4. 在同一房间完成领取后再离开。宿主与实际掉落交互，在原版菜单选一个普通新增祝福。各访客按 Insert 打开 **My rewards**，从自己当前机会显示的按钮中选择。菜单打开时玩家连接持续发送中立帧。按钮提交后先显示 Sent，权威快照中的 `consumed` 和 `choice` 表示领取结果。访客的 `heldBoons` 可另外核对对应 Unit 的名称、稀有度和层数。已支持的访客选项为普通新增的 PoseidonWeaponBoon 和 PoseidonSpecialBoon，各人只能领取实际抽到且可授予的一项。若某席没有可授予项或错过首次绑定，保留该席的实际状态。
-
-5. 四个回执入档后在录像终端按 **q** 完成 MP4，再正常退出游戏。检查原始画面中的四人、战斗和宿主选择。各客户端的隔离 profile 保留 `player-events.txt`，含真实 welcome 席号、发送的按键序号和访客选择。核对 `stages.txt` 中的原版事件、`snapshots.tsv` 中的双方实体和四份领取、`run-output.txt` 中的录像 SHA-256、退出码与存档校验。运行器退出码只描述采集和退出。用已有历史工具发布文本，另交原始 MP4 和四份客户端记录。
-
-   ```powershell
-   ./tools/publish-run.ps1 -RunDirectory $party
-   ```
-
-## 本轮离线核对
-
-`texlua tests/run.lua` 通过正式 play/serve 回环校验从访客按钮到该连接的授权席位、领取回执及菜单中立帧。`texlua tests/read_actors.lua "<游戏目录>/Content/Scripts"` 运行安装版 `SpawnRoomReward`，用受控原生边界核对实际返回的奖励物件和换房失效。四人完成同一场战斗和领取仍需上述实机记录。
+`texlua tests/run.lua` 覆盖正式 play/serve 连接、席位代际和权威回执。`texlua tests/read_actors.lua "<游戏目录>/Content/Scripts"` 加载安装版 Lua，从原版菜单等待输入，经按钮派发、宿主授予，核对同一实际返回实例和 consumed 投影。该回放的原生交互和按钮布局为夹具。四名玩家在同一真实遭遇共战并各自领取仍需一次完整录像和权威记录。

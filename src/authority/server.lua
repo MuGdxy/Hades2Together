@@ -220,7 +220,7 @@ function Server:step(inputTick)
           local accepted, reason
           if request.t == "boon" then
             local room, reward, round = Messages.boonScope(request.opportunity)
-            accepted, reason = self.game:ClaimGuestBoon(peer.playerId, room, reward, round, request.option)
+            accepted, reason = self.game:ClaimBoon(peer.playerId, room, reward, round, request.option)
             if not accepted then reason = "boon " .. request.opportunity .. " " .. request.option .. ": " .. tostring(reason) end
           else
             accepted, reason = self.game:SubmitInput(inputTick or self.tick + 1, peer.playerId, request)

@@ -7,7 +7,7 @@ $log = "$ship/ReturnOfModding/LogOutput.log"
 if ((Test-Path "$root/run-output.txt") -or (Test-Path $log) -or (Get-Process Hades2 -ErrorAction SilentlyContinue)) {
     throw 'A game or previous run exists'
 }
-if ((Get-FileHash "$ship/d3d12.dll").Hash -ne '8A85AB29B5F259EBAA793FCEB53856B7CDF8F80BB3A9E63773D9030FBFF3BF3B') { throw 'Unexpected loader' }
+if ((Get-FileHash "$ship/d3d12.dll").Hash -ne '020AE1867BD4D7521BCA9B6013AE06620454F7623CDFC8F3C55E49848282EEF9') { throw 'Unexpected loader' }
 $realSaves = Join-Path $env:USERPROFILE 'Saved Games/Hades II'
 function SavedProfiles { Get-ChildItem $realSaves -File -Filter 'Profile*.sav' | Sort-Object Name | ForEach-Object { $_.Name + ' ' + (Get-FileHash $_.FullName).Hash } }
 $before = @(SavedProfiles)
@@ -32,9 +32,9 @@ try {
     $env:SteamAppId = '1145350'
     $options = @('/Windowed=true','/X=960','/Y=540','/RequireFocusToUpdate=false','/AllowSaveLoad=false',
         '/UseDevSaves=true',('/DevSavePathStr="' + $profilePath + '"'),'/AllowControlHotSwap=false',
-        '/DirectLoad=F_Combat02','/DirectLoadShell=false')
+        '/AutoAdvanceNarration=true','/DirectLoad=F_Combat02','/DirectLoadShell=false')
     $observer = Start-Process $lua -ArgumentList ('"'+$root+'/observe.lua" "'+$root+'"') -PassThru -WindowStyle Hidden -RedirectStandardError "$root/observer.err"
-    # The player controlling the stock hero uses the original menu in this window.
+    # The authority renders stock menu input from the hero's player connection.
     $game = Start-Process "$ship/Hades2.exe" -WorkingDirectory $ship -ArgumentList $options -PassThru
     $null = $game.Handle
     Record ("start_utc=" + [datetime]::UtcNow.ToString('o') + " pid=" + $game.Id)

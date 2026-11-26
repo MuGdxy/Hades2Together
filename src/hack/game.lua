@@ -177,10 +177,10 @@ function Game:LoadedRoom(room)
   return load
 end
 
-local function projectGuestOptions(roomId, reward, claim)
+local function projectOptions(roomId, reward, claim, menu)
   if claim.state == "consumed" then return end
   for _, option in ipairs(claim.options or {}) do
-    local round = StockBoon.guestGrantRound(reward, claim.playerId, option)
+    local round = menu and menu.buttons[option] and menu.round or StockBoon.guestGrantRound(reward, claim.playerId, option)
     if round then
       if not claim.grantOptions then
         claim.opportunity = table.concat({ roomId, reward.id, round }, "/")
@@ -241,12 +241,13 @@ local function readRoom(self, game, room, rewardsOnly)
   -- Link a visible offer retained across reload before projecting each receipt.
   if self.session and Session.isAuthority(self.session) then StockBoon.reward(load) end
   for _, receipt in ipairs(load.boonClaims or {}) do
-    local available = StockBoon.readOptions(self, game, load, receipt)
+    local available, hostOffer = StockBoon.readOptions(self, game, load, receipt)
+    local menu = hostOffer and StockBoon.hostMenu(self, game, hostOffer)
     local claims = Boon.claims(receipt, not available)
     if #claims > 0 then
       if available then
         for _, claim in ipairs(claims) do
-          projectGuestOptions(view.id, receipt, claim)
+          projectOptions(view.id, receipt, claim, claim.playerId == self.hostSeat and menu)
         end
       end
       local row = { id = receipt.id, kind = receipt.kind, encounterId = receipt.encounterId, claims = claims }
@@ -300,6 +301,11 @@ function Game:ClaimGuestBoon(seat, room, reward, round, choice)
   local selection = self:SelectBoon(room, reward, seat, choice, round)
   if not selection then return nil, "option unavailable for this seat or opportunity" end
   return self:GrantGuestBoon(room, reward, seat, selection)
+end
+
+function Game:ClaimBoon(seat, room, reward, round, choice)
+  if seat == self.hostSeat then return StockBoon.chooseHost(self, seat, room, reward, round, choice) end
+  return self:ClaimGuestBoon(seat, room, reward, round, choice)
 end
 
 function Game:RoomRewards()

@@ -24,6 +24,7 @@ struct Proof {
     Owner owner{};
     unsigned pad_count{};
     bool attached_virtual_neutral{}, mapping{}, managed_lanes{};
+    bool use_mapping{};
     bool valid() const noexcept {
         const auto& p = owner;
         const bool routed = pad_count>0 && pad_count<=h2t_observe::playable_lanes &&
@@ -42,13 +43,14 @@ struct Sample {
 inline std::optional<Sample> encode(const Frame& frame) noexcept {
     const auto in_range=[](double n){return std::isfinite(n) && n>=-1 && n<=1;};
     if (!in_range(frame.x) || !in_range(frame.y) || frame.aim_x!=0 || frame.aim_y!=0 ||
-        (frame.buttons & ~3u)) return {};
+        (frame.buttons & ~19u)) return {};
     Sample result;
     result.axes[0]=static_cast<std::int16_t>(std::lround(frame.x*32767.0));
     result.axes[1]=static_cast<std::int16_t>(std::lround(frame.y*32767.0));
     // Ordinals after the six axes are exactly the stock list 0,1,2,3,9,10,4,6,7,8,11,12,13,14.
     result.buttons[1]=static_cast<std::uint8_t>(frame.buttons & 1u);
     result.buttons[2]=static_cast<std::uint8_t>((frame.buttons & 2u)!=0);
+    result.buttons[5]=static_cast<std::uint8_t>((frame.buttons & 16u)!=0);
     return result;
 }
 
@@ -121,7 +123,7 @@ public:
         if (!match(current)) { invalidate(); owner_.reset(); return false; }
         if (!session_ready_ || seq<=sequence_ || (have_sample_ && now<received_)) return false;
         const auto sample=encode(frame);
-        if (!sample) return false;
+        if (!sample || (sample->buttons[5] && (!current.use_mapping || current.owner.player_slot!=0))) return false;
         sequence_=seq;
         desired_=*sample;
         received_=now;
@@ -144,6 +146,10 @@ public:
         if (topology_) { fault_=true; return false; }
         if (!match(current)) { invalidate(); owner_.reset(); fault_=true; return false; }
         topology_=true;
+        if (have_sample_ && desired_.buttons[5] && !current.use_mapping) {
+            have_sample_=false;
+            desired_={};
+        }
         if (session_ready_ && have_sample_ && now>=received_ && now-received_<=max_lease_ms) {
             frozen_=desired_;
             frozen_sequence_=sequence_;

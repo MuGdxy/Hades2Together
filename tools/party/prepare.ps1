@@ -3,18 +3,21 @@ param(
     [Parameter(Mandatory)][string]$SourceStage,
     [Parameter(Mandatory)][string]$Out,
     [Parameter(Mandatory)][ipaddress]$Address,
-    [Parameter(Mandatory)][string]$CaptureHelper
+    [Parameter(Mandatory)][string]$CaptureHelper,
+    [string]$PlayerLoader
 )
 $ErrorActionPreference = 'Stop'
 $repo = (Get-Item "$PSScriptRoot/../..").FullName
 $source = (Get-Item -LiteralPath $SourceStage).FullName
 if ($Address.AddressFamily -ne 'InterNetwork') { throw 'Expected the host LAN IPv4 address' }
-if ((Get-FileHash "$source/Ship/d3d12.dll").Hash -ne '8A85AB29B5F259EBAA793FCEB53856B7CDF8F80BB3A9E63773D9030FBFF3BF3B') { throw 'Unexpected authority loader' }
+if (!$PlayerLoader) { $PlayerLoader = "$source/Ship/d3d12.dll" }
+if ((Get-FileHash -LiteralPath $PlayerLoader).Hash -ne '020AE1867BD4D7521BCA9B6013AE06620454F7623CDFC8F3C55E49848282EEF9') { throw 'Expected the reviewed host Use loader' }
 if ((Get-FileHash $CaptureHelper).Hash -ne '5557FB8BBF37421F9202C27AC783ECCAD88AF588CE08824BE4354EED95B28B83') { throw 'Unexpected game-window recorder' }
 if (Test-Path -LiteralPath $Out) { throw 'Use a fresh output directory' }
 $root = (New-Item -ItemType Directory -Path $Out).FullName
 $ship = New-Item -ItemType Directory "$root/Ship"
 Get-ChildItem "$source/Ship" -File | Copy-Item -Destination $ship.FullName
+Copy-Item -LiteralPath $PlayerLoader -Destination "$ship/d3d12.dll" -Force
 $plugins = New-Item -ItemType Directory "$ship/ReturnOfModding/plugins" -Force
 foreach ($name in 'Hell2Modding-GLOBAL','LuaENVY-ENVY') {
     Copy-Item "$source/Ship/ReturnOfModding/plugins/$name" -Destination $plugins.FullName -Recurse
@@ -45,7 +48,7 @@ foreach ($name in 'Authority','PlayerA','PlayerB','PlayerC','PlayerD') {
         $cfg = $cfg.Replace('role = "serve+play"','role = "serve"').Replace('bindAddress = "127.0.0.1"',('bindAddress = "' + $Address + '"')).Replace('cliSnapshots = false','cliSnapshots = true')
     } else {
         $cfg = $cfg.Replace('role = "serve+play"','role = "play"').Replace('serverAddress = "127.0.0.1"',('serverAddress = "' + $Address + '"'))
-        Copy-Item "$PSScriptRoot/guest.ps1" $parent
+        Copy-Item "$PSScriptRoot/player.lua","$PSScriptRoot/player.ps1","$PSScriptRoot/guest.ps1" $parent
     }
     [IO.File]::WriteAllText($configPath, $cfg)
 }

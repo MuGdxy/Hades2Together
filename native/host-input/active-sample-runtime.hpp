@@ -37,6 +37,10 @@ inline h2t_active::Proof route(unsigned lane=0) noexcept {
         h2t_observe::read<int>(pad+0x50)!=instance || h2t_observe::read<unsigned>(pad+0x38)!=2u) return result;
     const auto a1=h2t_observe::game_base+0x5516c0;
     const auto a2=h2t_observe::game_base+0x5525a0;
+    const auto use=h2t_observe::game_base+0x552140;
+    // Controls::SetupControlScheme binds Use to logical 55, SDL right shoulder on model 2.
+    result.use_mapping=lane==0 && h2t_observe::read<std::uint8_t>(use+0x0a)==1 &&
+        h2t_observe::read<int>(use+0xd0)==55;
     result.mapping=h2t_observe::read<std::uint8_t>(a1+0x0a)==1 &&
         h2t_observe::read<std::uint8_t>(a2+0x0a)==1 &&
         h2t_observe::read<int>(a1+0xd0)==51 && h2t_observe::read<int>(a2+0xd0)==52;
@@ -165,7 +169,10 @@ inline bool prove_clear(std::uint64_t generation) noexcept {
     const auto stock=h2t_observe_runtime::observe(hero_id);
     if (stock.trace.serial!=matching_observer_serial || !stock.owner_same || !stock.stock_same ||
         !stock.independent_neutral || !stock.observed_neutral) return false;
-    return adapter.observe_neutral(caller,generation,route(),adapter.audit(caller).batch,stock.handler_neutral);
+    const auto proof=route();
+    const bool use_neutral=!proof.use_mapping || h2t_observe_runtime::action_state(
+        proof.owner.handler,h2t_observe::game_base+0x552140)==0;
+    return adapter.observe_neutral(caller,generation,proof,adapter.audit(caller).batch,stock.handler_neutral && use_neutral);
 }
 inline bool submit(std::uint64_t generation,std::uint64_t sequence,const h2t_active::Frame& frame) noexcept {
     const auto caller=GetCurrentThreadId();

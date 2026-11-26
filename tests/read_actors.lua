@@ -596,15 +596,19 @@ do
   if arg[1] then
     -- Use the installed game's Lua for the selection, grant, insertion and return.
     -- Engine/UI calls are doubles. Pause at LogUpgradeChoice after the grant.
+    environment.import("gameplay/boon.lua").cancel(capture.roomLoad.boonOffer.reward, intent)
     setmetatable(game, { __index = _G })
     local onUsed
     game.OnUsed = function(event) onUsed = event[1] end
-    for _, module in ipairs({ "TraitLogic", "UpgradeChoiceLogic", "InteractLogic" }) do
+    for _, event in ipairs({ "OnPreThingCreation", "OnAnyLoad", "OnMenuOpened", "OnMenuCloseFinished",
+      "OnActiveUseTarget", "OnActiveUseTargetLost", "OnMouseOver", "OnMouseOff" }) do game[event] = function() end end
+    for _, module in ipairs({ "Main", "UILogic", "TraitLogic", "UpgradeChoiceLogic", "InteractLogic" }) do
       assert(loadfile(arg[1] .. "/" .. module .. ".lua", "t", game))()
     end
     stockGrant, game.AddTraitData = game.AddTraitData, wrapped
     game.GameState = { TraitsTaken = {} }
     game.TraitData = { [data.Name] = {} }
+    local stockThread = game.thread
     for _, name in ipairs({ "EquipReferencedWeapons", "thread", "RemoveStoreItemPin",
       "UpdateHeroTraitDictionary", "ProcessHeroTraitChanges", "CheckActivatedTraits",
       "ClampSprintSpeed", "MergeWeaponDataOverride", "RecordUse", "RunEventsGeneric",
@@ -619,29 +623,54 @@ do
     game.AreTraitsIdentical = function() return false end
     game.HeroHasTrait = function() return false end
     game.GetTraitUniqueId = function() return "fixture-unique-id" end
-    game.LogUpgradeChoice = function() coroutine.yield("stock grant returned") end
+    local logged
+    game.LogUpgradeChoice = function(clicked) logged = clicked; game.waitUnmodified(1) end
 
-    -- Use a different actor as the stock triggering user. Only the GUI is
-    -- substituted between HandleLootPickup and the original selection callback.
+    -- Stand in for the screen layout and the native notify registration. The
+    -- original Lua screen coroutine waits, resolves the button and grants.
     game.ActiveScreens, screen.ChoiceMade = {}, nil
     game.AreScreensActive = function() return next(game.ActiveScreens) ~= nil end
     game.HasResourceCost = function(cost) assert(cost == nil); return false end
     game.ShallowCopyTable = game.DeepCopyTable
-    hero.UntargetableFlags, guest.Traits = {}, {}
+    hero.IsDead, hero.UntargetableFlags, guest.Traits = false, {}, {}
     game.CurrentRun.LootTypeHistory, game.CurrentRun.LootBiomeRecord = {}, {}
     offer.OnUsedFunctionName = "UseLoot"
-    game.CallFunctionName = function(name, source, useArgs, user)
-      assert(name == "UseLoot" and user == guest)
-      return game.UseLoot(source, useArgs, user)
+    game.CallFunctionName = function(name, ...)
+      assert(name == "UseLoot" or name == "HandleUpgradeChoiceSelection")
+      return game[name](...)
     end
+    local event = "ScreenInput" .. screen.Name
+    button.Id, screen.Components = 9876, { Upgrade = button }
+    local nativeWait
+    game.NotifyOnInteractOrControlPressed = function(args)
+      assert(args.Notify == event and args.Ids[1] == button.Id); nativeWait = true
+    end
+    game.CancelNotify = function(args) assert(nativeWait and args.Name == event); nativeWait = false end
+    local isUseable = game.IsUseable
+    game.IsUseable = function(args)
+      if args.Id == button.Id then return true end
+      return isUseable(args)
+    end
+    game.IsInputAllowed = function() return true end
+    game.DebugPrint = function(args) error(args.Text) end
     game.OpenUpgradeChoiceMenu = function(...)
       local source, menuArgs = ...
       assert(select("#", ...) == 2 and source == offer and next(menuArgs) == nil)
       game.ActiveScreens[screen.Name] = screen
-      game.HandleUpgradeChoiceSelection(screen, button, {})
+      game.HandleScreenInput(screen)
     end
-    local ok, marker = coroutine.resume(coroutine.create(onUsed), { TriggeredByTable = offer, UserTable = guest })
-    assert(ok and marker == "stock grant returned", tostring(marker))
+    stockThread(onUsed, { TriggeredByTable = offer, UserTable = hero })
+    assert(nativeWait and game.HasWaitUntil(event))
+    local offerView = capture:RoomRewards()[1].claims[1]
+    local _, _, oldRound = Messages.boonScope(offerView.opportunity)
+    assert(oldRound and offerView.grantOption == data.Name)
+    capture.session.slots[1].connectionGeneration = 2
+    assert(not capture:ClaimBoon(1, roomId, spawned.id, oldRound, data.Name) and nativeWait)
+    assert(not capture:ClaimBoon(1, roomId, spawned.id, oldRound + 1, data.Name))
+    local _, _, round = Messages.boonScope(capture:RoomRewards()[1].claims[1].opportunity)
+    assert(round > oldRound and not capture:ClaimBoon(1, roomId, spawned.id, round, "NotOffered"))
+    assert(capture:ClaimBoon(1, roomId, spawned.id, round, data.Name) == "fixture-unique-id")
+    assert(logged == button and not nativeWait and not game.HasWaitUntil(event))
     assert(hero.Traits[1].Name == data.Name and hero.Traits[1].Id == "fixture-unique-id")
     assert(next(guest.Traits) == nil)
   else

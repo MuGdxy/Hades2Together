@@ -89,7 +89,7 @@ function Menu.pump(control, game)
   local results = Bridge.sync(console, control.commandsPath, function(playerId, state)
     return game:SubmitInput(tick, playerId, state)
   end, function(seat, room, reward, round, choice)
-    return game:ClaimGuestBoon(seat, room, reward, round, choice)
+    return game:ClaimBoon(seat, room, reward, round, choice)
   end)
   if #results > 0 then
     control.results = results

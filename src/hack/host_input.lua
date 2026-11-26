@@ -142,8 +142,8 @@ function Host.submit(game, frame)
   if not state then return false, "host sampler is waiting for a save-disabled room and hero" end
   if not Host.checkOwner(game) then return false, state.failure end
   if state.phase ~= "ready" then return false, state.phase end
-  if frame.aimX ~= 0 or frame.aimY ~= 0 or frame.buttons > 3 then
-    return false, "host sampler supports movement, Attack1 and Attack2"
+  if frame.aimX ~= 0 or frame.aimY ~= 0 or (frame.buttons > 3 and (frame.buttons < 16 or frame.buttons > 19)) then
+    return false, "host sampler supports movement, Attack1, Attack2 and Use"
   end
   if (frame.buttons ~= 0 or frame.moveX ~= 0 or frame.moveY ~= 0) and not game:InputAllowed() then
     return false, "stock input blocked"

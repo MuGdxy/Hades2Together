@@ -1,4 +1,5 @@
 local Actions = import("protocol/actions.lua")
+local Input = import("client/input.lua")
 local Messages = import("protocol/messages.lua")
 local Session = import("protocol/session.lua")
 
@@ -65,18 +66,12 @@ local function submitSample(words, submitInput, maxPlayers)
   if not Session.validSeat(seat, maxPlayers) then
     return "ERR input seat must be 1-" .. maxPlayers
   end
-  local moveX, moveY = tonumber(words[3]), tonumber(words[4])
-  if not Messages.validAxis(moveX) or not Messages.validAxis(moveY) then
-    return "ERR input axes must be numbers in [-1,1]"
-  end
-  local buttons, unknown = Actions.mask(words, 5)
-  if not buttons then
-    return "ERR unknown input action " .. unknown
-  end
+  local sample, errorMessage = Input.parse(words, 3)
+  if not sample then return "ERR " .. errorMessage end
   if not submitInput then
     return "ERR input submission unavailable"
   end
-  local ok, reason = submitInput(seat, { moveX = moveX, moveY = moveY, buttons = buttons })
+  local ok, reason = submitInput(seat, sample)
   if not ok then
     return "ERR input " .. reason
   end
