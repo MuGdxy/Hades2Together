@@ -1,4 +1,5 @@
--- Standalone retail candidate-source probe. No menu, session or grant.
+-- Standalone retail candidate-source probe. Pass "grant" for the isolated
+-- guest selection and original grant side-effect replay.
 local scripts = assert(arg[1], "pass the installed Content/Scripts directory")
 local stock = setmetatable({
   Import = function() end, OnSpawn = function() end,
@@ -97,7 +98,7 @@ function env.import(path)
   return modules[path]
 end
 local Session, Game, Adapter = env.import("protocol/session.lua"), env.import("hack/game.lua"), env.import("hack/stock_boon.lua")
-local function sample(first, second)
+local function makeGame()
   source.UpgradeOptions = loot.UpgradeOptions
   local session = Session.new("serve+play")
   for seat = 1, 3 do assert(Session.join(session, "player" .. seat, seat)) end
@@ -108,6 +109,63 @@ local function sample(first, second)
   for seat, actor in pairs(units) do
     game.guestInputs[seat] = { hero = host, room = room, load = 1, actor = actor, id = actor.ObjectId }
   end
+  return game, session
+end
+
+if arg[2] == "grant" then
+  local name = "PoseidonWeaponBoon"
+  stock.TraitSetData = {}
+  stock.LootData.TrialUpgrade = { PermanentTraits = {} }
+  stock.ToLookup = function(names)
+    local keys = {}
+    for _, key in ipairs(names) do keys[key] = true end
+    return keys
+  end
+  stock.WeaponSets = { HeroPrimaryWeapons = { "WeaponStaffSwing" }, HeroAllWeaponsAndSprint = {} }
+  assert(loadfile(scripts .. "/TraitData.lua", "t", stock))()
+  assert(loadfile(scripts .. "/TraitData_Poseidon.lua", "t", stock))()
+  stock.TraitData[name].Name = name
+  -- One actual priority entry; deterministic opportunity for the empty third Unit.
+  source.PriorityUpgrades = { name }
+  stock.ScreenData.UpgradeChoice.MaxChoices = 1
+  stock.HeroData.BoonData.RarityChances.Rare = 1
+  local game = makeGame()
+  game:ReadActors()
+  stock.HeroData.BoonData.RarityChances.Rare = 0
+  local token, item = game:SelectBoon(1, 1, 3, name)
+  assert(token and item.Type == "Trait" and item.ItemName == name and item.Rarity == "Rare")
+  item.Rarity = "Epic"
+  local repeated, retained = game:SelectBoon(1, 1, 3, name)
+  assert(token == repeated and retained.Rarity == "Rare" and game:BoundGuestUnit(3) == other)
+
+  -- The engine supplies base damage for the tooltip and a random suffix for
+  -- the stock instance ID. Neither leaf supplies the trait or its rarity.
+  stock.GameState, stock.ActiveScreens = { TraitsTaken = {} }, {}
+  stock.GetBaseDataValue = function(args)
+    assert(args.Name == "PoseidonSplashSplinter" and args.Property == "Damage")
+    return 1
+  end
+  stock._worldTime = 10
+  stock.RandomFloat = function(low, high) assert(low == 0 and high == 1); return 0.5 end
+  stock.DebugAssert = function(args) assert(args.Condition, args.Text) end
+  assert(#host.Traits == 0 and #other.Traits == 0 and not stock.GameState.TraitsTaken[name])
+  local ok, reason = pcall(stock.AddTrait, game:BoundGuestUnit(3), retained.ItemName, retained.Rarity,
+    { SkipQuestStatusCheck = true })
+  assert(not ok and tostring(reason):find("Cannot run GetTraitCount on non-hero units", 1, true), tostring(reason))
+  assert(stock.GameState.TraitsTaken[name] == true and #host.Traits == 0)
+  assert(#other.Traits == 1 and other.Traits[1].Name == name and other.Traits[1].Rarity == "Rare"
+    and other.Traits[1].RarityMultiplier == stock.TraitData[name].RarityLevels.Rare.Multiplier)
+  local reward = game.roomLoad.boonOffer.reward
+  assert(reward.seats[3].pending == token and not reward.seats[3].consumed)
+  reward.guests[3].rolls[1].rarities = nil -- retained pre-upgrade opportunity
+  local prior, unknown = game:SelectBoon(1, 1, 3, name)
+  assert(prior == token and unknown == nil)
+  print("seat 3 retained " .. name .. " Rare; original AddTraitData marked shared TraitsTaken before non-hero count assertion; no confirmed receipt")
+  return
+end
+
+local function sample(first, second)
+  local game, session = makeGame()
   local function options(seat)
     local view = game:ReadActors().room
     assert(env.import("protocol/room.lua").valid(view))

@@ -242,7 +242,17 @@ function Game:SelectBoon(roomId, rewardId, seat, choice)
   if not slot or not slot.connected then return nil end
   local offer = StockBoon.readOptions(self, rom.game, load)
   if not offer or offer.id ~= rewardId or not offer.reward then return nil end
-  return Boon.select(self.session, offer.reward, seat, self:BindHero(seat), choice)
+  local selection = Boon.select(self.session, offer.reward, seat, self:BindHero(seat), choice)
+  local member = selection and offer.reward.guests and offer.reward.guests[seat]
+  if member then
+    local roll = member.rolls[member.round]
+    -- Pre-upgrade rolls contain weights only. Never redraw an existing item.
+    local rarity = roll.rarities and roll.rarities[choice]
+    if rarity then
+      return selection, { Type = "Trait", ItemName = choice, Rarity = rarity }
+    end
+  end
+  return selection
 end
 
 function Game:RoomRewards()

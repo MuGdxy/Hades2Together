@@ -165,6 +165,19 @@ local function draw(g, run, source, unit, random, previous)
     excluded = previous.all[pick(previous.all, random)]
     for i = #chosen, 1, -1 do if chosen[i] == excluded then table.remove(chosen, i) end end
   end
+  local rarities = {}
+  local order = source.RarityRollOrder or g.TraitRarityData.BoonRarityRollOrder
+  for _, name in ipairs(chosen) do
+    rarities[name] = "Common"
+    local levels = g.TraitData[name].RarityLevels
+    if not common and levels then
+      for _, rarity in ipairs(order) do
+        if levels[rarity] and chances[rarity] and random() < chances[rarity] then
+          rarities[name] = rarity
+        end
+      end
+    end
+  end
   if #chosen < maximum then
     local pool, used = {}, {}
     for _, name in ipairs(chosen) do used[name] = true end
@@ -179,22 +192,24 @@ local function draw(g, run, source, unit, random, previous)
     for _, name in ipairs(traits) do if hasDependencies(owned, deps[name]) then add(name) end end
     while #chosen < maximum do
       local available = rarityPool(g.TraitData, pool, "Common")
+      local chosenRarity = "Common"
       if not common then
-        for _, rarity in ipairs(source.RarityRollOrder or g.TraitRarityData.BoonRarityRollOrder) do
+        for _, rarity in ipairs(order) do
           local candidates = rarityPool(g.TraitData, pool, rarity)
           local chance = chances[rarity] or 0
-          if #candidates > 0 and random() < chance then available = candidates end
+          if #candidates > 0 and random() < chance then available, chosenRarity = candidates, rarity end
         end
       end
       assert(#available > 0, "exchange or rare-only refill")
-      chosen[#chosen + 1] = table.remove(pool, available[pick(available, random)])
+      local name = table.remove(pool, available[pick(available, random)])
+      chosen[#chosen + 1], rarities[name] = name, chosenRarity
     end
   end
   local options = { table.unpack(chosen) }
   if restricted and (source.GodLoot or source.TreatAsGodLootByShops) and not source.IgnoreRestrictBoonChoices then
     table.remove(options, pick(options, random))
   end
-  return { options = options, all = chosen, chances = chances }
+  return { options = options, all = chosen, chances = chances, rarities = rarities }
 end
 
 function Guest.roll(g, run, offer, unit, salt, room, seat, round, previous)
