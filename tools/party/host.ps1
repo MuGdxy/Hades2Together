@@ -14,8 +14,17 @@ $before = @(SavedProfiles)
 if (!$before.Count) { throw 'No save baseline' }
 $power = & nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits
 if ($LASTEXITCODE -or @($power).Count -ne 1 -or $power -notmatch '^\s*\d+\s*$' -or [int]$power -gt 10) { throw 'GPU busy or unknown' }
-$gpuTasks = & nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits
-if ($LASTEXITCODE -or $gpuTasks) { throw 'GPU compute occupied or unavailable' }
+$gpuReport = & nvidia-smi -q -x
+if ($LASTEXITCODE) { throw 'GPU process list unavailable' }
+[xml]$gpuState = $gpuReport -join "`n"
+$processes = $gpuState.SelectSingleNode('/nvidia_smi_log/gpu/processes')
+if (!$processes -or $processes.InnerText.Trim() -eq 'N/A') { throw 'GPU process list unavailable' }
+# On WDDM the compute-apps query also lists ordinary desktop graphics clients.
+foreach ($process in $processes.SelectNodes('process_info')) {
+    if ($process.type -notin 'G', 'C+G') {
+        throw "GPU occupied or process type unknown: PID $($process.pid), type $($process.type)"
+    }
+}
 $before | Set-Content "$root/saves-before.txt"
 $profilePath = "$root/profile"
 $game = $null
