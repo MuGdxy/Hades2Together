@@ -1,0 +1,8 @@
+diff --git a/src/lua_extensions/bindings/hades/data.cpp b/src/lua_extensions/bindings/hades/data.cpp
+index 9b46c96..edceb9c 100644
+--- a/src/lua_extensions/bindings/hades/data.cpp
++++ b/src/lua_extensions/bindings/hades/data.cpp
+@@ -14,0 +15 @@
++#include "observe-sampler-lua.hpp"
+@@ -532,0 +534 @@ namespace lua::hades::data
++    h2t_observe_runtime::bind(ns);

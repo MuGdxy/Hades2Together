@@ -14,7 +14,7 @@ Hell2Modding 1.0.125（`a80069739d1333591c7ddfb89b606d9101bd31f4`）将 `rom.gam
 
 Steam v1.143476 暴露的 `SendControlInput` 在原生动作分派中直接返回。实机请求按下、转向和释放后，`IsControlDown` 均为 false，英雄速度为 0，`GetLocation` 坐标保持一致。该分支没有读取玩家或对象参数。加载器的 `rom.inputs` 可注册按键观察回调。 [Hell2Modding 输入接口](https://github.com/SGG-Modding/Hell2Modding/blob/a80069739d1333591c7ddfb89b606d9101bd31f4/docs/lua/tables/rom.inputs.md)
 
-演出 `Move` 在 `AddInputBlock` 下仍可移动英雄，角度和速度形式还可以进入引擎报告为阻挡的点。实机 `SpawnUnit` 生成的三个原生 NPC 都是 `PlayerControlled=false`。运行中的 `play` 通过 `PushInput` 返回 `unsupported`，等待合规的原生玩家输入通道。
+演出 `Move` 在 `AddInputBlock` 下仍可移动英雄，角度和速度形式还可以进入引擎报告为阻挡的点。实机 `SpawnUnit` 生成的三个原生 NPC 都是 `PlayerControlled=false`。一席的 `input` 和 `play` 已接入可选的原版手柄采样器。普通二席仍依赖可独立管理的原生 Player/Unit/handler 生命周期。见[采样器与构建条件](../native/host-input/README.md)。
 
 ## 独立观察与游戏内模型呈现
 

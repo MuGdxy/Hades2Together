@@ -40,6 +40,7 @@ function Menu.publish(control, game, state)
 end
 
 function Menu.pump(control, game)
+  game:UpdateInputOwner()
   local console = control.console
   local tick = (control.inputTick or 0) + 1
   control.inputTick = tick
