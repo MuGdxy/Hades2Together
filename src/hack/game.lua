@@ -261,7 +261,8 @@ function Game:ReadLocalInput()
   return {
     moveX = held(readControl, "Right") - held(readControl, "Left"),
     moveY = held(readControl, "Down") - held(readControl, "Up"),
-    buttons = held(readControl, "Attack1") * Actions.bit("Attack1"),
+    buttons = held(readControl, "Attack1") * Actions.bit("Attack1")
+      + held(readControl, "Attack2") * Actions.bit("Attack2"),
   }
 end
 
