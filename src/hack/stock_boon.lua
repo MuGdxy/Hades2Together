@@ -40,8 +40,14 @@ end
 
 -- Includes an anchored offer retained from a plugin version that stored
 -- receipts only after consumption.
-function Stock.reward(load)
+function Stock.reward(load, id)
   local offer = load.boonOffer
+  if id and (not offer or offer.id ~= id) then
+    for _, reward in ipairs(load.boonClaims or {}) do
+      if reward.id == id then return reward end
+    end
+    return
+  end
   if not offer then return end
   if offer.reward then return offer.reward end
   load.boonClaims = load.boonClaims or {}
@@ -65,6 +71,17 @@ function Stock.current(g, load)
     and map.RewardPointsUsed and map.RewardPointsUsed[load.room.SpawnRewardOnId] == offer.objectId then
     return offer
   end
+end
+
+-- After stock pickup the world object is gone. Only the confirmed host
+-- receipt can keep the original guests' rolls available in this encounter.
+local function available(game, g, load, reward)
+  local offer = Stock.current(g, load)
+  if offer and offer.reward == reward then return true, offer end
+  local host = reward.seats and reward.seats[game.hostSeat]
+  return not load.room.Leaving and reward.encounterId ~= nil
+    and load.encounters[load.room.Encounter] == reward.encounterId
+    and host and host.slot == game.session.slots[game.hostSeat] and host.consumed and host.instanceId ~= nil
 end
 
 local function choiceScreen(g, source)
@@ -160,10 +177,12 @@ function Stock.onGuestReroll(game, g, load, rewardId, seat, unit, round)
   return true
 end
 
-function Stock.readOptions(game, g, load)
-  local run, offer = g.CurrentRun, Stock.current(g, load)
-  if not offer or not game.session or not Session.isAuthority(game.session) then return end
-  local reward = Stock.reward(load)
+function Stock.readOptions(game, g, load, reward)
+  if not game.session or not Session.isAuthority(game.session) then return end
+  reward = reward or Stock.reward(load)
+  if not reward then return end
+  local allowed, offer = available(game, g, load, reward)
+  if not allowed then return end
   for seat, member in pairs(reward.guests or {}) do
     local options = member.rolls[member.round].options
     if options and member.slot == game.session.slots[seat] and member.unit.ObjectId == member.actorId
@@ -173,6 +192,8 @@ function Stock.readOptions(game, g, load)
       Boon.withholdOptions(reward, seat)
     end
   end
+  if not offer then return reward end
+  local run = g.CurrentRun
   if offer.candidates ~= offer.source.UpgradeOptions then
     if offer.reward then Boon.withholdOptions(offer.reward, game.hostSeat) end
     offer.candidates, offer.locksObserved = offer.source.UpgradeOptions, false
@@ -180,12 +201,12 @@ function Stock.readOptions(game, g, load)
   if run and run.CurrentRoom == load.room and run.Hero and run.Hero.ObjectId
     and game:BindHero(game.hostSeat) == run.Hero.ObjectId then
     local options = generatedOptions(g, offer)
-    if options and Boon.setOptions(game.session, Stock.reward(load), game.hostSeat, run.Hero.ObjectId, options) then
-      return offer, true
+    if options and Boon.setOptions(game.session, reward, game.hostSeat, run.Hero.ObjectId, options) then
+      return reward, offer
     end
   end
   if offer.reward then Boon.withholdOptions(offer.reward, game.hostSeat) end
-  return offer, false
+  return reward
 end
 
 local function remember(players, slot, trait)
@@ -275,13 +296,12 @@ function Stock.grantGuest(game, roomId, rewardId, seat, selection)
   if not session or not Session.isAuthority(session) or type(selection) ~= "table"
     or selection.seat ~= seat then return nil, "invalid selection" end
   local load = g.CurrentRun and game:LoadedRoom(g.CurrentRun.CurrentRoom)
-  local offer = load and load.boonOffer
-  if not offer or load.id ~= roomId or offer.id ~= rewardId then return nil, "stale opportunity" end
-  local reward = offer.reward
-  local member = reward and reward.guests and reward.guests[seat]
-  local entry = reward and reward.seats and reward.seats[seat]
+  local reward = load and load.id == roomId and Stock.reward(load, rewardId)
+  if not reward or reward.id ~= rewardId or load.room.Leaving then return nil, "stale opportunity" end
+  local member = reward.guests and reward.guests[seat]
+  local entry = reward.seats and reward.seats[seat]
   local function bound()
-    return member and entry and offer.reward == reward and reward.guests[seat] == member and reward.seats[seat] == entry
+    return member and entry and reward.guests[seat] == member and reward.seats[seat] == entry
       and member.slot == session.slots[seat] and entry.slot == member.slot
       and member.slot.connected and entry.actor == member.actorId and member.unit.ObjectId == member.actorId
       and game:BoundGuestUnit(seat) == member.unit
@@ -290,8 +310,9 @@ function Stock.grantGuest(game, roomId, rewardId, seat, selection)
   if entry.consumed and entry.grantedSelection == selection then return entry.instanceId end
   local name = entry.selected
   local slot = guestGrantSlots[name]
-  if entry.pending ~= selection or not slot or Stock.current(g, load) ~= offer
-    or offer.source.StackOnly or offer.source.UpgradeOnPick then
+  local allowed, offer = available(game, g, load, reward)
+  if entry.pending ~= selection or not slot or not allowed
+    or (offer and (offer.source.StackOnly or offer.source.UpgradeOnPick)) then
     return nil, "no matching ordinary selection"
   end
   local roll = member.rolls[member.round]
@@ -316,7 +337,7 @@ function Stock.grantGuest(game, roomId, rewardId, seat, selection)
     return nil, "invalid processed trait"
   end
   if game.session ~= session or not Session.isAuthority(session) or not g.CurrentRun
-    or game:LoadedRoom(g.CurrentRun.CurrentRoom) ~= load or Stock.current(g, load) ~= offer
+    or game:LoadedRoom(g.CurrentRun.CurrentRoom) ~= load or not available(game, g, load, reward)
     or not bound() or entry.pending ~= selection or entry.selected ~= name or member.rolls[member.round] ~= roll then
     return nil, "selection changed during processing"
   end
@@ -328,7 +349,7 @@ function Stock.grantGuest(game, roomId, rewardId, seat, selection)
   local slots = unit.SlottedTraits
   -- These are the attached Unit's Lua tables. Finish all stock calls before
   -- publishing into them; preserve the table identities used by other readers.
-  trait.Id, trait.SourceName = id, offer.source.Name
+  trait.Id, trait.SourceName = id, reward.kind
   local index = insertTrait(unit, trait)
   local added = unit.Traits[index]
   if added == trait and unit.TraitDictionary[name][1] == added and unit.SlottedTraits[slot] == name
@@ -353,8 +374,8 @@ local function selected(game, g, unit, data, args)
     or args.TraitData ~= data or data.TraitToReplace then return end
   local load = game:LoadedRoom(run.CurrentRoom)
   if not load then return end
-  local offer, resolved = Stock.readOptions(game, g, load)
-  if not resolved then return end
+  local _, offer = Stock.readOptions(game, g, load)
+  if not offer then return end
   local screen = choiceScreen(g, offer.source)
   if not screen or screen.ChoiceMade ~= true then return end
   for _, trait in pairs(unit.Traits or {}) do

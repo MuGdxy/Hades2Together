@@ -3,6 +3,7 @@
 -- the authority's actor-addressed grant.
 local scripts = assert(arg[1], "pass the installed Content/Scripts directory")
 local roomBind = arg[2] == "room-bind"
+local hostFirst = arg[2] == "host-first"
 local stock = setmetatable({
   Import = function() end, OnSpawn = function() end,
   AddIncomingDamageModifier = function() end,
@@ -33,7 +34,7 @@ local owned = { Name = "PoseidonWeaponBoon", Slot = "Melee", RestrictBoonChoices
 guest.Traits[1], guest.TraitDictionary[owned.Name] = owned, { owned }
 local loot = { Name = "PoseidonUpgrade", GodLoot = true,
   PriorityUpgrades = { owned.Name, "PoseidonSpecialBoon", "PoseidonCastBoon" } }
-if arg[2] ~= "unit-grant" and not roomBind then
+if arg[2] ~= "unit-grant" and not roomBind and not hostFirst then
   assert(stock.GetTotalTraitCount(guest) == 1 and stock.GetTotalTraitCount(host) == 0)
   local countAssertion
   stock.DebugAssert = function(args) countAssertion = args.Condition end
@@ -115,7 +116,7 @@ local function makeGame()
   return game, session
 end
 
-if arg[2] == "grant" or arg[2] == "unit-grant" or roomBind then
+if arg[2] == "grant" or arg[2] == "unit-grant" or roomBind or hostFirst then
   local weapon, special = "PoseidonWeaponBoon", "PoseidonSpecialBoon"
   local name = arg[3] or weapon
   assert(name == weapon or (arg[2] == "unit-grant" and name == special))
@@ -202,8 +203,58 @@ if arg[2] == "grant" or arg[2] == "unit-grant" or roomBind then
   source.PriorityUpgrades = arg[2] == "unit-grant" and { special, weapon } or { weapon }
   stock.ScreenData.UpgradeChoice.MaxChoices = #source.PriorityUpgrades
   stock.HeroData.BoonData.RarityChances.Rare = 1
-  local game = makeGame()
+  local game, session = makeGame()
   local view = game:ReadActors()
+  if hostFirst then
+    local initial = view.room.rewards[1].claims
+    local guestClaim = initial[#initial]
+    assert(guestClaim.playerId == 3 and guestClaim.opportunity == "1/1/1" and guestClaim.grantOption == name)
+    source.UpgradeOptions = { { Type="Trait", ItemName=special } }
+    local data = { Name=special }
+    local screen = { Name="UpgradeChoice", Source=source, ChoiceMade=true }
+    screen.UpgradeButtons = { { Type="Trait", OnPressedFunctionName="HandleUpgradeChoiceSelection",
+      Screen=screen, LootData=source, Data=data, Index=1 } }
+    stock.ActiveScreens, stock.ScreenAnchors, stock.CurrentLootData =
+      { UpgradeChoice=screen }, { ChoiceScreen=screen }, source
+    local function removeLoot()
+      stock.MapState.RoomRequiredObjects[909], stock.LootObjects[909], stock.MapState.RewardPointsUsed[55] = nil, nil, nil
+    end
+    assert(game:SelectBoon(1, 1, 1, special))
+    removeLoot()
+    assert(not game:RoomRewards() and not game:ClaimGuestBoon(3, 1, 1, 1, name))
+    stock.MapState.RoomRequiredObjects[909], stock.LootObjects[909], stock.MapState.RewardPointsUsed[55] = source, source, 909
+    local function stockGrant(unit, trait)
+      local instance = { Id="stock-host-instance", Name=trait.Name }
+      table.insert(unit.Traits, instance)
+      return instance
+    end
+    game:ObserveTraitGrant(stock, stockGrant, host, data, { FromLoot=true, PreProcessedForDisplay=true, TraitData=data })
+    removeLoot()
+    stock.ScreenAnchors, stock.ActiveScreens, stock.CurrentLootData = {}, {}, nil
+    local retained = assert(game:RoomRewards()[1])
+    assert(not retained.objectId and retained.claims[1].choice == special and retained.claims[1].state == "consumed")
+    local nextClaim = retained.claims[#retained.claims]
+    assert(nextClaim.playerId == 3 and nextClaim.state == "eligible" and nextClaim.opportunity == guestClaim.opportunity,
+      "host pickup lost the guest opportunity")
+    assert(table.concat(nextClaim.options, ",") == table.concat(guestClaim.options, ","))
+    assert(Session.join(session, "late", 4) == 4)
+    local late = stock.CreateNewHero(nil, { WeaponName="WeaponStaffSwing" })
+    late.ObjectId = 1000004
+    units[4] = late
+    game.guestInputs[4] = { hero=host, room=room, load=1, actor=late, id=late.ObjectId }
+    assert(game:BoundGuestUnit(4) == late and not game:ClaimGuestBoon(4, 1, 1, 1, name))
+    assert(not Adapter.onGuestReroll(game, stock, game.roomLoad, 1, 3, other, 2))
+    local id = assert(game:ClaimGuestBoon(3, 1, 1, 1, name))
+    assert(game:ClaimGuestBoon(3, 1, 1, 1, name) == id and #other.Traits == 1)
+    local added = other.Traits[1]
+    assert(added.Id == id and added.Name == name and added.Rarity == "Rare" and added.StackNum == 1)
+    local claims = game:ReadActors().room.rewards[1].claims
+    assert(claims[#claims].playerId == 3 and claims[#claims].state == "consumed" and claims[#claims].choice == name)
+    stock.SessionState.MapLoads = 2
+    assert(not game:ClaimGuestBoon(3, 1, 1, 1, name) and not game:RoomRewards())
+    print("host-first: unconfirmed disappearance refused; seat 3 retained its roll and claimed Rare x1 after host pickup; late seat, duplicate and room transition checked")
+    return
+  end
   if arg[2] == "unit-grant" then
     assert(env.import("protocol/room.lua").valid(view.room))
     local claims = view.room.rewards[1].claims

@@ -62,6 +62,8 @@ python tests/net_smoke.py --lua lua --stock-room
 
 当前房间的权威调用入口是 `Game:SelectBoon(roomId, rewardId, seat, choice)`。调用者从已认证的会话取得席号，入口用已绑定角色和原物件校验意图。已有有效选项时，调用无需菜单对象。快照 `room.rewards[].claims[]` 的 `options` 是该席已知的有效选项，`selected` 表示尚待引擎确认，`consumed/choice` 保留给已经落到受益角色的结果。访客可经 play 协议提交当前 `grantOptions` 中的一项，详见 [远端输入接口](network.md#正式插件的远端输入)。
 
+宿主先领取普通波塞冬祝福时，权威端从原版新增特质取得宿主回执。随后即使物件移除，最初已绑定的访客仍可在同房、同遭遇使用该机会原有的轮次与选项。晚加入的席位没有这次机会；换房后旧机会关闭。若物件消失时没有已确认的宿主回执，系统不会据此延续机会。可用 `texlua tests/stock_guest_boon_source.lua "<游戏目录>/Content/Scripts" host-first` 回放这一顺序。
+
 **普通候选可以在开菜单前读取。** 安装版 `CreateLoot` 调用 `SetTraitsOnLoot`，后者根据当前英雄生成 `loot.UpgradeOptions`；房间还可能用指定选项替换这张表。适配层读取当房已识别物件的最终列表，调用原版 `CalcNumLootChoices(loot)` 取得该英雄的可选数量。数量覆盖全部候选时即可向已绑定的宿主席公布普通新增特质。读取快照和提交选择均不重新抽取。见 `RoomLogic.lua:2266`、`RewardLogic.lua:376`、`TraitLogic.lua:1746–1754, 1760–2001`。
 
 数量小于候选总数时，具体封锁索引由 `CreateBoonLootButtons` 随机抽取，再应用到排序后的条目。`CreateUpgradeChoiceButton` 逐条写入 `item.Blocked`，原版领取历史也读取此字段。适配层核对当次抽取留下的全部索引（可能有空洞）及对应条目标记，之后同一张候选表可脱离菜单使用。限制尚未确定或重掷后等待新结果时，快照暂缺该席的待选记录，旧选择凭据失效；已经确认的领取记录保留。候选生成与数量限制均依赖当前英雄，访客仍缺少按其 Unit 生成原版候选的入口。见 `UpgradeChoiceLogic.lua:149–193, 441–445, 707–717, 1184–1199` 和 `UtilityLogic.lua:1094–1120`。

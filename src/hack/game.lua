@@ -232,11 +232,13 @@ local function readRoom(self, game, room, rewardsOnly)
       visibleReward = { id = offerId, encounterId = id, objectId = reward.ObjectId, kind = reward.Name }
     end
   end
-  local live = StockBoon.readOptions(self, game, load)
+  -- Link a visible offer retained across reload before projecting each receipt.
+  if self.session and Session.isAuthority(self.session) then StockBoon.reward(load) end
   for _, receipt in ipairs(load.boonClaims or {}) do
-    local claims = Boon.claims(receipt, not live or live.reward ~= receipt)
+    local available = StockBoon.readOptions(self, game, load, receipt)
+    local claims = Boon.claims(receipt, not available)
     if #claims > 0 then
-      if live and live.reward == receipt then
+      if available then
         for _, claim in ipairs(claims) do
           projectGuestOptions(view.id, receipt, claim)
         end
@@ -264,19 +266,19 @@ function Game:SelectBoon(roomId, rewardId, seat, choice, round)
   if not self.session or not Session.isAuthority(self.session) or not load or load.id ~= roomId then return nil end
   local slot = self.session.slots[seat]
   if not slot or not slot.connected then return nil end
-  local offer = StockBoon.readOptions(self, rom.game, load)
-  if not offer or offer.id ~= rewardId or not offer.reward then return nil end
+  local reward = StockBoon.reward(load, rewardId)
+  if not reward or reward.id ~= rewardId or not StockBoon.readOptions(self, rom.game, load, reward) then return nil end
   if round ~= nil then
-    if StockBoon.guestGrantRound(offer.reward, seat, choice) ~= round then return nil end
-    local entry = offer.reward.seats and offer.reward.seats[seat]
+    if StockBoon.guestGrantRound(reward, seat, choice) ~= round then return nil end
+    local entry = reward.seats and reward.seats[seat]
     if entry and entry.consumed == choice then
-      local member = offer.reward.guests[seat]
+      local member = reward.guests[seat]
       if entry.slot == slot and self:BoundGuestUnit(seat) == member.unit then return entry.grantedSelection end
       return nil
     end
   end
-  local selection = Boon.select(self.session, offer.reward, seat, self:BindHero(seat), choice)
-  local member = selection and offer.reward.guests and offer.reward.guests[seat]
+  local selection = Boon.select(self.session, reward, seat, self:BindHero(seat), choice)
+  local member = selection and reward.guests and reward.guests[seat]
   if member then
     local roll = member.rolls[member.round]
     -- Pre-upgrade rolls contain weights only. Never redraw an existing item.
