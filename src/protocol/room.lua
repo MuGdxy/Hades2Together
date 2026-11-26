@@ -42,6 +42,13 @@ end
 
 local claimStates = { eligible = true, claiming = true, consumed = true }
 
+local function validOptions(claim)
+  if claim.options == nil then return claim.selected == nil end
+  local options = unique(claim.options, function(option) return name(option) and option end)
+  return options and (claim.selected == nil or (claim.state == "claiming" and options[claim.selected]))
+    and (claim.choice == nil or options[claim.choice])
+end
+
 local function rewardId(reward, participants, maxPlayers)
   if type(reward) ~= "table" or not id(reward.id) or not id(reward.encounterId)
     or not name(reward.kind) or (reward.objectId ~= nil and not id(reward.objectId)) then
@@ -49,7 +56,7 @@ local function rewardId(reward, participants, maxPlayers)
   end
   if reward.claims ~= nil and not unique(reward.claims, function(claim)
     if type(claim) == "table" and Session.validSeat(claim.playerId, maxPlayers) and claimStates[claim.state]
-      and (not participants or participants[claim.playerId])
+      and (not participants or participants[claim.playerId]) and validOptions(claim)
       and (claim.choice == nil or claim.state == "consumed" and name(claim.choice)) then
       return claim.playerId
     end

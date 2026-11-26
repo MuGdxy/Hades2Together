@@ -30,6 +30,8 @@ function Bridge.claimLines(rewards)
       lines[#lines + 1] = "claim reward=" .. reward.id .. " kind=" .. reward.kind
         .. " seat=" .. claim.playerId .. " state=" .. claim.state
         .. (claim.choice and " choice=" .. claim.choice or "")
+        .. (claim.selected and " selected=" .. claim.selected or "")
+        .. (claim.options and claim.state ~= "consumed" and " options=" .. table.concat(claim.options, ",") or "")
     end
   end
   return lines

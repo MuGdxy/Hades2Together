@@ -3,7 +3,8 @@
 local Engine = import("hack/engine.lua")
 local GuestInput = import("hack/guest_input.lua")
 local HostInput = import("hack/host_input.lua")
-local Boon = import("hack/boon_claim.lua")
+local Boon = import("gameplay/boon.lua")
+local StockBoon = import("hack/stock_boon.lua")
 local Actions = import("protocol/actions.lua")
 local Input = import("client/input.lua")
 local Inputs = import("dev/inputs.lua")
@@ -11,7 +12,7 @@ local Messages = import("protocol/messages.lua")
 local Session = import("protocol/session.lua")
 
 local Game = { hostSeat = 1 } -- Default for instances retained across plugin reload.
-Game.ObserveTraitGrant = Boon.onGrant
+Game.ObserveTraitGrant = StockBoon.onGrant
 
 function Game.new(session, hostSeat)
   return setmetatable({
@@ -171,11 +172,16 @@ local function readRoom(self, game, room, rewardsOnly)
     leaving = room.Leaving == true, exitsUnlocked = room.ExitsUnlocked == true,
   }
   if not rewardsOnly then view.exits = readExits(game.MapState) end
+  if load.boonOffer then StockBoon.readOptions(self, game, load) end
   if load.boonClaims then
-    view.rewards = {}
+    local live = StockBoon.current(game, load)
     for _, receipt in ipairs(load.boonClaims) do
-      view.rewards[#view.rewards + 1] = { id = receipt.id, kind = receipt.kind,
-        encounterId = receipt.encounterId, claims = { receipt.claim } }
+      local claims = Boon.claims(receipt, not live or live.reward ~= receipt)
+      if #claims > 0 then
+        view.rewards = view.rewards or {}
+        view.rewards[#view.rewards + 1] = { id = receipt.id, kind = receipt.kind,
+          encounterId = receipt.encounterId, claims = claims }
+      end
     end
   end
   local encounter = room.Encounter
@@ -219,6 +225,19 @@ local function readRoom(self, game, room, rewardsOnly)
     end
   end
   return view
+end
+
+-- Authority intent only. The caller supplies the authenticated seat; only an
+-- independently observed grant can turn this selection into a consumed claim.
+function Game:SelectBoon(roomId, rewardId, seat, choice)
+  local run = rom.game.CurrentRun
+  local load = run and self:LoadedRoom(run.CurrentRoom)
+  local offer = StockBoon.current(rom.game, load)
+  if not self.session or not Session.isAuthority(self.session) or not offer or load.id ~= roomId
+    or offer.id ~= rewardId or not offer.reward then return nil end
+  local slot = self.session.slots[seat]
+  if not slot or not slot.connected then return nil end
+  return Boon.select(self.session, offer.reward, seat, self:BindHero(seat), choice)
 end
 
 function Game:RoomRewards()

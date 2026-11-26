@@ -57,6 +57,7 @@ local Party = import("gameplay/party.lua")
 local Death = import("gameplay/death.lua")
 local Scaling = import("gameplay/scaling.lua")
 local Loot = import("gameplay/loot.lua")
+local Boon = import("gameplay/boon.lua")
 local Session = import("protocol/session.lua")
 local Messages = import("protocol/messages.lua")
 local Codec = import("protocol/codec.lua")
@@ -297,12 +298,53 @@ test("queued commands add a fake player", function()
 end)
 
 assert(loadfile(root .. "/tests/tcp.lua"))()(test, eq)
+
+test("two actors select from their own boon options and independently confirm grants without a menu", function()
+  local session = Session.new("serve")
+  local first, second = Session.join(session, "Mel"), Session.join(session, "Guest")
+  local reward = { id = 7, encounterId = 3, kind = "PoseidonUpgrade" }
+  local other = { id = 7, encounterId = 3, kind = "PoseidonUpgrade" } -- a different room instance
+  assert(Boon.setOptions(session, reward, first, 40000, { "Wave", "Splash" }))
+  assert(Boon.setOptions(session, reward, second, 1000002, { "Flood" }))
+  assert(not Boon.select(session, reward, first, 40000, "Flood"))
+  assert(not Boon.select(session, reward, second, 40000, "Flood"))
+  local a = assert(Boon.select(session, reward, first, 40000, "Wave"))
+  local b = assert(Boon.select(session, reward, second, 1000002, "Flood"))
+  local room = { id = 1, name = "Room", leaving = false, exitsUnlocked = false,
+    rewards = { { id = reward.id, encounterId = reward.encounterId, kind = reward.kind } } }
+  local function snapshot()
+    room.rewards[1].claims = Boon.claims(reward)
+    local wire = Codec.decode(Codec.encode(Messages.snapshot(8, {}, {}, room)))
+    assert(import("protocol/room.lua").valid(wire.room))
+    return wire.room.rewards[1].claims
+  end
+  local choosing = snapshot()
+  eq(choosing[1].selected, "Wave")
+  eq(choosing[2].options[1], "Flood")
+  eq(choosing[2].choice, nil)
+  assert(not Boon.confirm(session, other, b, 1000002, "Flood", "trait-b"))
+  assert(not Boon.confirm(session, reward, b, 40000, "Flood", "trait-b"))
+  assert(not Boon.confirm(session, reward, b, 1000002, "Wave", "trait-b"))
+  -- Explicit engine-result fixtures exercise the contract, including a
+  -- beneficiary the current retail selection adapter cannot target.
+  assert(Boon.confirm(session, reward, b, 1000002, "Flood", "trait-b"))
+  eq(snapshot()[1].state, "claiming")
+  assert(not Boon.confirm(session, reward, b, 1000002, "Flood", "trait-b"))
+  assert(not Boon.confirm(session, reward, a, 40000, "Wave", ""))
+  assert(not Boon.confirm(session, reward, a, 40000, "Wave", "trait-b"))
+  assert(Boon.confirm(session, reward, a, 40000, "Wave", "trait-a"))
+  local done = snapshot()
+  eq(done[1].choice, "Wave")
+  eq(done[2].playerId, second)
+  eq(done[2].choice, "Flood")
+end)
+
 assert(loadfile(root .. "/tests/reload.lua"))()(root, test, eq)
 
 test("rules modules do not touch the game", function()
   local allowed = {
     ["hack/game.lua"] = true,
-    ["hack/boon_claim.lua"] = true,
+    ["hack/stock_boon.lua"] = true,
     ["main.lua"] = true,
     ["ready.lua"] = true,
     ["reload.lua"] = true,

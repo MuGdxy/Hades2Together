@@ -459,9 +459,10 @@ do
   game.MapState.ActiveObstacles[offer.ObjectId] = nil
   nativeName = offer.Name
   assert(capture:RoomRewards()[1].id == spawned.id)
-  local screen = { Name = "UpgradeChoice", Source = offer, ChoiceMade = true }
+  local screen = { Name = "UpgradeChoice", Source = offer, ChoiceMade = true, BlockedIndexes = {} }
   local data = { Name = "PoseidonWeaponBoon" }
-  local button = { Screen = screen, LootData = offer, Data = data, Type = "Trait",
+  offer.UpgradeOptions = { { Type = "Trait", ItemName = data.Name } }
+  local button = { Index = 1, Screen = screen, LootData = offer, Data = data, Type = "Trait",
     OnPressedFunctionName = "HandleUpgradeChoiceSelection" }
   screen.UpgradeButtons = { button }
   game.ActiveScreens, game.ScreenAnchors = { UpgradeChoice = screen }, { ChoiceScreen = screen }
@@ -489,13 +490,29 @@ do
   game.AddTraitData(hero, data, args)
   assert(reloadCalls == 1 and game.AddTraitData == wrapped)
   setmetatable(capture, oldMeta)
-  assert(capture:RoomRewards() == nil) -- screen open and return without a committed instance
+  assert(capture:RoomRewards()[1].claims[1].state == "eligible") -- grant returned without an owned instance
   insert = true
   game.AddTraitData({ ObjectId = 123, Traits = {} }, data, args)
   button.LootData = replacement -- same ID and name, different original object
   game.AddTraitData(hero, data, args)
-  assert(capture:RoomRewards() == nil)
+  assert(capture:RoomRewards()[1].claims[1].state == "eligible")
   hero.Traits, button.LootData = {}, offer
+  -- Reuse the authority catalogue after removing the presentation objects.
+  game.ScreenAnchors, game.ActiveScreens = {}, {}
+  local roomId = capture.roomLoad.id
+  assert(not capture:SelectBoon(roomId + 1, spawned.id, 1, data.Name))
+  assert(not capture:SelectBoon(roomId, spawned.id, 1, "NotOffered"))
+  capture.session.slots[1].connected = false
+  assert(not capture:SelectBoon(roomId, spawned.id, 1, data.Name))
+  capture.session.slots[1].connected = true
+  local intent = assert(capture:SelectBoon(roomId, spawned.id, 1, data.Name))
+  local waiting = capture:RoomRewards()[1].claims[1]
+  assert(waiting.state == "claiming" and waiting.selected == data.Name and waiting.choice == nil)
+  assert(capture:SelectBoon(roomId, spawned.id, 1, data.Name) == intent)
+  game.MapState.RoomRequiredObjects[offer.ObjectId] = replacement
+  assert(not capture:SelectBoon(roomId, spawned.id, 1, data.Name))
+  game.MapState.RoomRequiredObjects[offer.ObjectId] = offer
+  game.ActiveScreens, game.ScreenAnchors = { UpgradeChoice = screen }, { ChoiceScreen = screen }
   if arg[1] then
     -- Use the installed game's Lua for the selection, grant, insertion and return.
     -- Engine/UI calls are doubles. Pause at LogUpgradeChoice after the grant.
@@ -507,6 +524,7 @@ do
     end
     stockGrant, game.AddTraitData = game.AddTraitData, wrapped
     game.GameState = { TraitsTaken = {} }
+    game.TraitData = { [data.Name] = {} }
     for _, name in ipairs({ "EquipReferencedWeapons", "thread", "RemoveStoreItemPin",
       "UpdateHeroTraitDictionary", "ProcessHeroTraitChanges", "CheckActivatedTraits",
       "ClampSprintSpeed", "MergeWeaponDataOverride", "RecordUse", "RunEventsGeneric",
