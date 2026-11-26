@@ -85,7 +85,9 @@ python tests/net_smoke.py --lua lua --stock-room
 
 建议的最小接口是模组适配层的 `resolveOrdinaryBoonOptions(offer, unit)`。输入取该机会的原始掉落配置和已绑定的受益 Unit；占槽、已持有特质、限选、稀有度加成及其缓存均按该 Unit 读取，房间条件和本局禁用列表沿用权威世界。结果按机会、角色和本轮重掷保存，交给现有 `Boon.setOptions`。读取快照只取已裁定的结果。
 
-具体需要决定的是访客抽取使用哪条随机序列。原版对一个物件写一次 `loot.UpgradeOptions`；优先池裁剪与封锁都调用未传 RNG 的 `RemoveRandomValue`，会消耗游戏的全局随机序列（`UpgradeChoiceLogic.lua:157–162, 774–779`、`UtilityLogic.lua:1094–1119`）。给访客再抽一次会推进后续原版随机结果。若要求保留宿主序列，则需为该机会的访客抽取显式传入权威管理的独立 RNG。两种策略都要保留宿主已经生成的掉落和限选结果。决定前，访客候选保持未知；本次回放没有执行授予。
+原版对一个物件写一次 `loot.UpgradeOptions`。优先池裁剪与封锁调用未传 RNG 的 `RemoveRandomValue`，消耗游戏的全局随机序列（`UpgradeChoiceLogic.lua:157–162, 774–779`、`UtilityLogic.lua:1094–1119`）。
+
+**访客抽取策略（待实现）。** 宿主沿用原版结果。权威端为每个访客独立抽取，随机源与原版全局 RNG 隔离。每个房间奖励机会按受益席位保存该轮结果，读取快照、打开菜单和同席重连都复用它。该角色发生有效重掷时才生成其下一轮候选。客户端读取权威结果。上述接口回放仅定位了原版读取宿主数据的边界。
 
 安装版的 `OnUsed` 从 `triggerArgs.UserTable` 取得交互者，将其传给 `UseLoot(usee, args, user)`。正常通过检查后，`UseLoot` 调用 `HandleLootPickup(CurrentRun, usee, args)`，在这里丢失了独立的 `user` 参数。后者调用 `OpenUpgradeChoiceMenu(loot, args)`。见 `InteractLogic.lua:303–343, 621–676, 693–733`。
 
