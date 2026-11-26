@@ -346,6 +346,7 @@ test("rules modules do not touch the game", function()
     ["hack/game.lua"] = true,
     ["hack/stock_boon.lua"] = true,
     ["hack/guest_boon.lua"] = true,
+    ["hack/guest_splash.lua"] = true,
     ["main.lua"] = true,
     ["ready.lua"] = true,
     ["reload.lua"] = true,

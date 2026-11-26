@@ -2,6 +2,7 @@
 
 local Engine = import("hack/engine.lua")
 local GuestInput = import("hack/guest_input.lua")
+local GuestSplash = import("hack/guest_splash.lua")
 local HostInput = import("hack/host_input.lua")
 local Boon = import("gameplay/boon.lua")
 local StockBoon = import("hack/stock_boon.lua")
@@ -14,6 +15,7 @@ local Session = import("protocol/session.lua")
 local Game = { hostSeat = 1 } -- Default for instances retained across plugin reload.
 Game.ObserveTraitGrant = StockBoon.onGrant
 Game.GrantGuestBoon = StockBoon.grantGuest
+Game.ApplyGuestSplash = GuestSplash.apply
 
 function Game.new(session, hostSeat)
   return setmetatable({
@@ -752,6 +754,24 @@ function Game:OnMap(name)
 end
 
 function Game:Install()
+  if self.session and Session.isAuthority(self.session) and not self.guestSplashInstalled then
+    local g = rom.game
+    local original = g.CheckOnDamagedPowers
+    if type(original) == "function" then
+      g.CheckOnDamagedPowers = function(victim, attacker, args, ...)
+        if not attacker or attacker == g.CurrentRun.Hero or not attacker.TraitDictionary
+          or not attacker.TraitDictionary.PoseidonWeaponBoon then return original(victim, attacker, args, ...) end
+        local results = table.pack(original(victim, attacker, args, ...))
+        local ok, err = pcall(self.ApplyGuestSplash, self, g, victim, attacker, args)
+        if not ok and self.guestSplashError ~= err then
+          self.guestSplashError = err
+          rom.log.warning("[Hades2Together] guest Poseidon splash: " .. tostring(err))
+        end
+        return table.unpack(results, 1, results.n)
+      end
+      self.guestSplashInstalled = true
+    end
+  end
   if self.session and Session.isAuthority(self.session) and not self.boonObserver then
     local g = rom.game
     local original = g.AddTraitData

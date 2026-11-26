@@ -111,6 +111,14 @@ python tests/net_smoke.py --lua lua --stock-room
 
 运行 `texlua tests/stock_guest_boon_source.lua "<游戏目录>/Content/Scripts" unit-grant PoseidonSpecialBoon` 可复现特技祝福的授予与回读；省略末项可复现攻击祝福。原版脚本负责稀有度加工；原生席位绑定由夹具提供。用例覆盖换绑拒绝、确认冲突回滚、同凭据重试，以及同名宿主特质保持原数量。该接口的验收止于访客持有的实例。
 
+### 访客攻击祝福的命中来源
+
+权威端沿原版 `DamageEnemy → CheckOnDamagedPowers` 处理直接命中。对普通 `PoseidonWeaponBoon`，适配器核对事件中的 `AttackerTable`、`AttackerId`、当前房间的原生席位绑定和攻击者自己的特质实例，并检查该实例的武器与弹体条件。离线期间已发出的攻击仍按角色归属处理。宿主与其法术召唤物沿用原版派发。
+
+访客调用安装版 Lua 函数 `CheckPoseidonSplash` 的独立副本。该函数只捕获 `_ENV`；副本从实际访客 Unit 读取来源和特质，用逐席键调用原版冷却与多段命中计数。原版函数决定是否调用 `CreateProjectileFromUnit` 以及传入的目的地、倍率和角度。若安装的函数含有其他闭包依赖，插件保留原版派发并记录错误。
+
+运行 `texlua tests/stock_guest_splash.lua "<游戏目录>/Content/Scripts"` 可重放效果接口。脚本执行安装版伤害线程和溅射函数，原生角色绑定与弹体创建端点由夹具提供。断言核对宿主与访客各自的来源 ID、同一目标、各自倍率，以及无祝福访客的零次调用。实机弹体生成与后续伤害留待引擎层验证。
+
 ## 后续原版接入
 
 奖励均等指同一次经过验证的原版机会对每个符合条件的参与者提供一次原版交互。每席由该席原版上下文执行检查和选择，结果可以不同。已证实的零售流程只有当前英雄的赋予上下文；多人归属、同时选择或依次选择的原版入口仍待验证。需要确认 `OnUsed` 的真实角色/物件映射、原版选项归属和提交回执。用房间实例、遭遇实例、奖励机会和已绑定席位组合关联回执；等原版确认再从 `claiming` 进入 `consumed`。不得由网络自行选择或生成奖励，也不得复制一次 `AddTraitToHero` 结果、切换当前英雄或替原版开放出口。
