@@ -16,13 +16,20 @@ local output = assert(io.open(root .. "/snapshots.tsv", "wb"))
 local received = false
 local ready = false
 local count, lastTick, finish = 0, nil, nil
+local function fail(reason)
+  output:close()
+  local result = assert(io.open(root .. "/observer-result.txt", "wb"))
+  assert(result:write(("observer_failure=%s snapshots=%d last_tick=%s\n"):format(reason, count, tostring(lastTick))))
+  assert(result:close())
+  os.exit(1)
+end
 local function gameExited()
   local marker = io.open(root .. "/game-exited.ok", "rb")
   if marker then marker:close(); return true end
 end
 while true do
   local stopping = gameExited()
-  local events, failure = client:poll()
+  local events, failure, frames = client:poll()
   for _, event in ipairs(events or {}) do
     local snap = event.msg
     if snap.t == "snap" then
@@ -45,13 +52,15 @@ while true do
     end
   end
   if failure then
-    assert(received and failure == "closed", failure)
+    if not received or failure ~= "closed" then fail(failure) end
     finish = "peer_closed"
     break
   end
-  if stopping and #events == 0 and not client.socket.select({client.transport.socket}, {}, 0)[1] then
-    assert(received, "game exited before first snapshot")
-    assert(not client.transport.readingBody and client.transport.incoming == "", "incomplete final snapshot frame")
+  -- On Windows a reset socket can remain select-readable after a nonblocking
+  -- drain returns no frames. Count decoded frames, including stale snapshots.
+  if stopping and frames == 0 then
+    if not received then fail("game exited before first snapshot") end
+    if client.transport.readingBody or client.transport.incoming ~= "" then fail("incomplete final snapshot frame") end
     finish = "game_exit_drained"
     break
   end

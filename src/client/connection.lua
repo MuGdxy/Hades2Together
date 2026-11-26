@@ -110,7 +110,8 @@ function Client:poll()
   end
   self.transport:flush()
   local accepted = {}
-  for _, item in ipairs(self.transport:drain()) do
+  local batch = self.transport:drain()
+  for _, item in ipairs(batch) do
     local applied = self:accept(item.msg)
     if applied == false then
       self.transport:close("invalid server message")
@@ -119,7 +120,7 @@ function Client:poll()
       accepted[#accepted + 1] = item
     end
   end
-  return accepted, self.transport.closed
+  return accepted, self.transport.closed, #batch
 end
 
 function Client:sendInput(state)
