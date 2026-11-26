@@ -107,15 +107,16 @@ local function updateSeat(game, native, seat)
     game.guestInputs[seat] = state
   end
   local point
-  if not state.sawOwner and game:LoadedRoom(room) and game.hostInput
+  if not state.sawOwner and not state.pendingSpawn and game:LoadedRoom(room) and game.hostInput
       and game.hostInput.load == load and game.hostInput.bound and not game.hostInput.failure then
     if not game.guestResource then
       native.register_file_redirect("Maps/bin/H2TGuest.thing_bin", _PLUGIN.plugins_mod_folder_path .. "/hack/H2TGuest.bin")
       game.guestResource = true
     end
-    point = game:GuestSpawnPoint(hero.ObjectId)
+    point = game:GuestSpawnPoint(hero.ObjectId, state)
   end
   local result = call(native, seat, "h2t_guest_owner", hero.ObjectId, load, point or 0, true, slot.connectionGeneration or 1)
+  state.pendingSpawn = result.status == "waiting for original input return" and (state.pendingSpawn or point) or nil
   if not result.id then
     state.id, state.sequence, state.token, state.ready, state.actor = nil, nil, nil, false, nil
     if result.status == "empty" then

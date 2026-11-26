@@ -450,4 +450,38 @@ assert(observedConsumable.id == 3 and observedConsumable.encounterId == spawned.
 assert(observedConsumable.kind == "MaxHealthDrop" and observedConsumable.objectId == offer.ObjectId)
 assert(observedConsumable.claims == nil)
 
+-- Replay the three coincident guest positions from room 1, TCP tick 19.
+do
+  local room = {}
+  local firstGuestXY = { X = 6500.34180, Y = 9321.06348 }
+  local locations = {
+    [40000] = { X = 6145.40527, Y = 9667.50195 }, [1000002] = firstGuestXY,
+    [11] = firstGuestXY, [12] = firstGuestXY, [13] = {X=6600,Y=9400},
+    [14] = {X=6700,Y=9400}, [15] = {X=6800,Y=9400},
+  }
+  local original = environment.rom.game
+  environment.rom.game = {
+    GetLocation = function(args) return locations[args.Id] end,
+    IdExists = function(args) return locations[args.Id] ~= nil end,
+    IsLocationBlocked = function(args) assert(args.CheckUnits) return args.Id == 14 end,
+    GetIds = function(args) assert(args.Name == "SpawnPoints") return {11,12,13,14,15} end,
+    GetClosest = function(args)
+      if args.DestinationIds then return args.DestinationIds[1] end
+      return 11
+    end,
+  }
+  local joining = {room=room,load=1}
+  local controller = environment.import("hack/game.lua").new()
+  controller.guestInputs = {
+    [2]={room=room,load=1,id=1000002,slot={connected=false}},
+    [3]={room=room,load=1,pendingSpawn=13}, [4]=joining,
+  }
+  assert(controller:GuestSpawnPoint(40000, joining) == 15)
+  locations[15] = firstGuestXY
+  assert(controller:GuestSpawnPoint(40000, joining) == nil)
+  locations[1000002] = {X=6510,Y=9350}
+  assert(controller:GuestSpawnPoint(40000, joining) == 11)
+  environment.rom.game = original
+end
+
 print("live actor projection passed")

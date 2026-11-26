@@ -341,18 +341,45 @@ function Game:InputAllowed()
   return ok and allowed == true
 end
 
-function Game:GuestSpawnPoint(hero)
+function Game:GuestSpawnPoint(hero, joining)
   local g = rom.game
-  local id = g.GetClosest({ Id = hero, DestinationName = "SpawnPoints", RequiredLocationUnblocked = true })
-  local function usable(point)
-    return type(point) == "number" and point > 0 and point ~= hero and g.IdExists({Id=point})
-      and g.IsLocationBlocked({Id=point, CheckUnits=true}) == false
+  local occupied = {}
+  local run = g.CurrentRun
+  local room = joining and joining.room or (run and run.CurrentRoom)
+  local load = joining and joining.load or (g.SessionState and g.SessionState.MapLoads)
+  local function occupy(id)
+    if not g.IdExists({ Id = id }) then return false end
+    local x, y = self:location(id)
+    if not finite(x) or not finite(y) then return false end
+    occupied[x] = occupied[x] or {}
+    occupied[x][y] = true
+    return true
   end
+  if not occupy(hero) then return end
+  for _, guest in pairs(GuestInput.states(self)) do
+    if guest ~= joining and guest.room == room and guest.load == load then
+      -- Include offline actors and joins queued for the same native input return.
+      local id = guest.id or guest.pendingSpawn
+      if id and not occupy(id) then return end
+    end
+  end
+  local function usable(point)
+    if not stockId(point) or not g.IdExists({ Id = point }) then return false end
+    local x, y = self:location(point)
+    return finite(x) and finite(y) and not (occupied[x] and occupied[x][y])
+      and g.IsLocationBlocked({ Id=point, CheckUnits=true }) == false
+  end
+  local id = g.GetClosest({ Id = hero, DestinationName = "SpawnPoints", RequiredLocationUnblocked = true })
   if usable(id) then return id end
-  -- A stationary retained actor can occupy the original nearest authored point.
-  local points = g.GetIds and g.GetIds({ Name = "SpawnPoints" })
-  for _, point in ipairs(points or {}) do
-    if point ~= id and usable(point) then return point end
+  local available = {}
+  for _, point in ipairs(g.GetIds({ Name = "SpawnPoints" }) or {}) do
+    if point ~= id and usable(point) then available[#available + 1] = point end
+  end
+  if #available > 0 then
+    local closest = g.GetClosest({ Id = hero, DestinationIds = available })
+    for _, point in ipairs(available) do
+      if point == closest then return point end
+    end
   end
 end
 
