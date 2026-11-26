@@ -521,7 +521,8 @@ function Game:BodyReport()
     if slot and guest then
       local position = guest.id and (" id=" .. guest.id .. positionText(self, guest.id)) or ""
       local receipt = guest.sequence and (" appliedSeq=" .. guest.sequence) or ""
-      parts[#parts + 1] = playerId .. ":" .. slot.name .. ":" .. (guest.reason or "pending") .. position .. receipt
+      local idle = not slot.connected and guest.offlineBatch and (" offlineBatch=" .. guest.offlineBatch) or ""
+      parts[#parts + 1] = playerId .. ":" .. slot.name .. ":" .. (guest.reason or "pending") .. position .. receipt .. idle
     elseif slot and slot.connected then
       local pending = playerId == 2 and rom.data and rom.data.h2t_guest_owner
       parts[#parts + 1] = playerId .. ":" .. slot.name .. (pending and ":awaiting room owner" or ":unsupported")

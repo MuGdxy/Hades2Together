@@ -70,7 +70,10 @@ inline void bind(sol::table& ns) {
             out["publication"]=guest.publication();
             out["inputBound"]=runtime::guest_bound;
             const auto audit=runtime::guest_input.audit(t);
-            if (audit.result==h2t_active::Result::complete) out["sequence"]=audit.applied_sequence;
+            if (audit.result==h2t_active::Result::complete) {
+                out["sequence"]=audit.applied_sequence;
+                if (audit.reads==20 && !audit.changed && !audit.applied_sequence) out["idleBatch"]=audit.batch;
+            }
         } else if (runtime::guest_bound) runtime::release_guest_input();
         out["epoch"]=guest.epoch();
         out["status"]=guest.status();

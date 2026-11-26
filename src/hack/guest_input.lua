@@ -74,7 +74,11 @@ function Guest.update(game, native)
     state.reason = "waiting for original handler"
     return
   end
-  if not sync(state, slot) then return end
+  state.offlineBatch = nil
+  if not sync(state, slot) then
+    if not slot.connected and not state.token then state.offlineBatch = result.idleBatch end
+    return
+  end
   if not state.ready then state.ready = native.h2t_guest_clear(state.publication, state.token) end
   if state.ready then state.reason, state.sequence = "ready", result.sequence end
 end
