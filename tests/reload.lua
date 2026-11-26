@@ -220,6 +220,15 @@ return function(root, test, eq)
       local capture = host.public.captureInput
       host.public.captureInput = function(seat, frame)
         assert(seat == 2)
+        -- The fixture replaces native input. Supply its room-owned binding
+        -- on first use, and retain it across the simulated reconnect.
+        local game = host.observedGame
+        if not game.guestInputs[seat] then
+          local run = host.game.CurrentRun
+          game.guestInputs[seat] = { actor = actor, id = actor.ObjectId, hero = run.Hero,
+            room = run.CurrentRoom, load = host.game.SessionState.MapLoads,
+            slot = game.session.slots[seat], session = game.session }
+        end
         host.locations[82] = { X = frame.moveX, Y = frame.moveY }
         return capture(seat, frame)
       end
@@ -262,6 +271,7 @@ return function(root, test, eq)
       eq(snapshot.heroes[1].id, 40000)
       eq(snapshot.heroes[1].hp, 17)
       eq(snapshot.heroes[2].id, 82)
+      eq(snapshot.heroes[2].playerId, seat)
       eq(host.inputs[1].seat, seat)
       eq(host.inputs[1].frame.moveX, 1)
       eq(host.inputs[1].frame.buttons, 2)
