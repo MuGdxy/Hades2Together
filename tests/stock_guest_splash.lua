@@ -37,22 +37,31 @@ stock.thread = function(fn, ...) return assert(coroutine.resume(coroutine.create
 local shots = {}
 stock.CreateProjectileFromUnit = function(args) shots[#shots + 1] = args end
 
-local name = "PoseidonWeaponBoon"
-local data = stock.TraitData[name]
-data.Name = name
--- RunData prepares these lookups at boot. Use ordinary WeaponStaffSwing.
-local action = data.OnEnemyDamagedAction
-action.ValidWeaponsLookup = stock.ToLookup(action.ValidWeapons)
-for _, key in ipairs({ "MultihitWeaponWhitelist", "MultihitProjectileWhitelist" }) do
-  action.Args[key .. "Lookup"] = stock.ToLookup(action.Args[key])
+local weapon, special = "PoseidonWeaponBoon", "PoseidonSpecialBoon"
+for _, name in ipairs({ weapon, special }) do
+  local data = stock.TraitData[name]
+  data.Name = name
+  -- RunData prepares these lookups at boot. Exercise the two base staff weapons.
+  local action = data.OnEnemyDamagedAction
+  action.ValidWeaponsLookup = stock.ToLookup(action.ValidWeapons)
+  for _, key in ipairs({ "MultihitWeaponWhitelist", "MultihitProjectileWhitelist" }) do
+    action.Args[key .. "Lookup"] = stock.ToLookup(action.Args[key])
+  end
 end
-local function equip(unit, rarity)
+local function equip(unit, name, rarity)
   local trait = stock.GetProcessedTraitData({ Unit = unit, TraitName = name, StackNum = 1, Rarity = rarity })
-  unit.Traits[1], unit.TraitDictionary[name] = trait, { trait }
+  unit.Traits[#unit.Traits + 1], unit.TraitDictionary[name] = trait, { trait }
 end
-equip(host, "Common")
-equip(guest, "Rare")
+equip(host, weapon, "Common")
+equip(guest, weapon, "Rare")
 host.Traits[2] = { ConeModifier = { ScaleIncrease = 2 } }
+
+-- Count admission before the stock splash cooldown can mask a second call.
+local admissions, recordHit = {}, stock.ProjectileRecordUnitHit
+stock.ProjectileRecordUnitHit = function(id, key)
+  if key == "CheckPoseidonSplash" then admissions[id] = (admissions[id] or 0) + 1 end
+  return recordHit(id, key)
+end
 
 local units = { [2] = guest, [3] = bare }
 local env = setmetatable({ rom = { game = stock, log = { warning = error }, data = {
@@ -96,11 +105,22 @@ assert(#shots == 0)
 hit(host, 101)
 shot(1, host, 1, 2)
 assert(Session.release(session, 2)) -- an already emitted hit still has its world owner
+equip(guest, special, "Rare")
 hit(guest, 105)
 shot(2, guest, 1.25, 1)
+assert(admissions[105] == 1 and #shots == 2)
+stock._worldTime = stock._worldTime + 1
+hit(guest, 108, "WeaponStaffBall", nil, "ProjectileStaffBall")
+shot(3, guest, 1.5, 1)
+assert(admissions[108] == 1 and #shots == 3)
 stock._worldTime = stock._worldTime + 1
 hit(guest, 105) -- original per-projectile repeat rule
+assert(#shots == 3)
+table.remove(guest.Traits, 1)
+guest.TraitDictionary[weapon] = nil
+hit(guest, 109, "WeaponStaffBall", nil, "ProjectileStaffBall")
+shot(4, guest, 1.5, 1)
 units[2] = bare -- cached actor still exists, native binding no longer matches
-hit(guest, 106)
-assert(#shots == 2 and stock.CurrentRun.Hero == host)
-print("retail damage thread: host 40000 Common x1, guest 1000002 Rare x1 to victim 81; bare guest, mismatched owner, wrong weapon and repeat produced no extra splash")
+hit(guest, 106, "WeaponStaffBall", nil, "ProjectileStaffBall")
+assert(not admissions[106] and #shots == 4 and stock.CurrentRun.Hero == host)
+print("retail damage thread: guest 1000002 with both Rare boons, staff swing (105) x1.25 and staff special (108) x1.50, one admission and one splash each on victim 81; special-only also passed")

@@ -111,13 +111,15 @@ python tests/net_smoke.py --lua lua --stock-room
 
 运行 `texlua tests/stock_guest_boon_source.lua "<游戏目录>/Content/Scripts" unit-grant PoseidonSpecialBoon` 可复现特技祝福的授予与回读；省略末项可复现攻击祝福。原版脚本负责稀有度加工；原生席位绑定由夹具提供。用例覆盖换绑拒绝、确认冲突回滚、同凭据重试，以及同名宿主特质保持原数量。该接口的验收止于访客持有的实例。
 
-### 访客攻击祝福的命中来源
+### 访客普攻与特攻祝福的命中来源
 
-权威端沿原版 `DamageEnemy → CheckOnDamagedPowers` 处理直接命中。对普通 `PoseidonWeaponBoon`，适配器核对事件中的 `AttackerTable`、`AttackerId`、当前房间的原生席位绑定和攻击者自己的特质实例，并检查该实例的武器与弹体条件。离线期间已发出的攻击仍按角色归属处理。宿主与其法术召唤物沿用原版派发。
+权威端沿原版 `DamageEnemy → CheckOnDamagedPowers` 处理直接命中。适配器核对 `AttackerTable`、`AttackerId` 和当前房间的原生席位绑定，依次读取攻击者自己持有的 `PoseidonWeaponBoon`（Melee）和 `PoseidonSpecialBoon`（Secondary）。每个实例的 `OnEnemyDamagedAction` 提供其武器、弹体条件和加工后的效果参数。离线期间已发出的攻击仍按角色归属处理。宿主与其法术召唤物沿用原版派发。
 
 访客调用安装版 Lua 函数 `CheckPoseidonSplash` 的独立副本。该函数只捕获 `_ENV`；副本从实际访客 Unit 读取来源和特质，用逐席键调用原版冷却与多段命中计数。原版函数决定是否调用 `CreateProjectileFromUnit` 以及传入的目的地、倍率和角度。若安装的函数含有其他闭包依赖，插件保留原版派发并记录错误。
 
-运行 `texlua tests/stock_guest_splash.lua "<游戏目录>/Content/Scripts"` 可重放效果接口。脚本执行安装版伤害线程和溅射函数，原生角色绑定与弹体创建端点由夹具提供。断言核对宿主与访客各自的来源 ID、同一目标、各自倍率，以及无祝福访客的零次调用。实机弹体生成与后续伤害留待引擎层验证。
+运行 `texlua tests/stock_guest_splash.lua "<游戏目录>/Content/Scripts"` 可重放效果接口。双持 Rare 的同一访客分别用 `WeaponStaffSwing` 和 `WeaponStaffBall` 命中同一目标，各进入一次溅射派发，各产生一次创建请求，倍率为 1.25 和 1.50。原生角色绑定与弹体创建端点由夹具提供。
+
+Hell2Modding 1.0.125 将游戏全局表暴露为 `rom.game`，并向插件提供调试库。其 `sandbox_lua_state` 限制列表未包含这里使用的 `debug.getupvalue`、`string.dump` 或 `load`。LuaENVY 1.2.1 的模块导入使用文本模式；溅射适配器直接调用 Lua 的 `load(..., "b", env)` 装入同一 VM 生成的函数。独立 Lua 5.2.4 已重放该调用；游戏进程中的插件环境和实际弹体仍待实机验证。若正在运行已注册普攻回调的 `5f63be1`，更新后需重启宿主一次，以替换其中固化的普攻特质检查。
 
 ## 后续原版接入
 

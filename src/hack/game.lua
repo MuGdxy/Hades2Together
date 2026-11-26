@@ -759,8 +759,9 @@ function Game:Install()
     local original = g.CheckOnDamagedPowers
     if type(original) == "function" then
       g.CheckOnDamagedPowers = function(victim, attacker, args, ...)
-        if not attacker or attacker == g.CurrentRun.Hero or not attacker.TraitDictionary
-          or not attacker.TraitDictionary.PoseidonWeaponBoon then return original(victim, attacker, args, ...) end
+        if not attacker or attacker == g.CurrentRun.Hero or not attacker.TraitDictionary then
+          return original(victim, attacker, args, ...)
+        end
         local results = table.pack(original(victim, attacker, args, ...))
         local ok, err = pcall(self.ApplyGuestSplash, self, g, victim, attacker, args)
         if not ok and self.guestSplashError ~= err then
