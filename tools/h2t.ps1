@@ -21,7 +21,7 @@ param(
 $control = Join-Path $env:USERPROFILE "Hades2Together"
 $commandsPath = Join-Path $control "commands.txt"
 $statusPath = Join-Path $control "status.txt"
-$lastObserverStatus = ""
+$lastReadOnlyStatus = ""
 New-Item -ItemType Directory -Force -Path $control | Out-Null
 
 function Add-ControlCommand([string]$Line) {
@@ -34,10 +34,22 @@ function Add-ControlCommand([string]$Line) {
     $stream.Close()
 }
 
-function Test-ObserverStatus([string]$Snapshot) {
-    # A reader can see only the first bytes of the header during a write.
-    return ($Snapshot -cmatch '\Acontrol=observer(?:\r?\n|\z)') -or
-        ($Snapshot.Length -gt 0 -and "control=observer".StartsWith($Snapshot, [StringComparison]::Ordinal))
+function Initialize-Playback {
+    $sample = Join-Path (Split-Path $PSScriptRoot -Parent) "control\inputs.txt"
+    $dest = Join-Path $control "inputs.txt"
+    if (-not (Test-Path -LiteralPath $dest) -and (Test-Path -LiteralPath $sample)) {
+        Copy-Item -LiteralPath $sample -Destination $dest
+    }
+}
+
+function Test-MapName([string]$Name) {
+    return $Name -cmatch '^[A-Za-z0-9_]+\z'
+}
+
+function Get-ReadOnlyMode([string]$Snapshot) {
+    if ($Snapshot -cmatch '\Acontrol=(observer|play)(?:\r?\n|\z)') { return $Matches[1] }
+    if ($Snapshot -and 'control=play'.StartsWith($Snapshot, [StringComparison]::Ordinal)) { return 'play' }
+    if ($Snapshot -and 'control=observer'.StartsWith($Snapshot, [StringComparison]::Ordinal)) { return 'observer' }
 }
 
 function Get-ControlStatus {
@@ -47,23 +59,27 @@ function Get-ControlStatus {
     } catch [IO.IOException] {
         # The game may be publishing a status update.
     }
-    if (Test-ObserverStatus $snapshot) {
+    $mode = Get-ReadOnlyMode $snapshot
+    if ($mode) {
         if ($snapshot -cmatch '\r?\nobserverStatus=complete\z') {
-            $script:lastObserverStatus = $snapshot.Substring(0, $snapshot.Length - $Matches[0].Length)
-            return $script:lastObserverStatus
+            $script:lastReadOnlyStatus = $snapshot.Substring(0, $snapshot.Length - $Matches[0].Length)
+            return $script:lastReadOnlyStatus
         }
-        if ($script:lastObserverStatus) {
-            return $script:lastObserverStatus
+        if ($script:lastReadOnlyStatus -and
+            ($snapshot -notmatch '\Acontrol=(observer|play)(?:\r?\n|\z)' -or
+             (Get-ReadOnlyMode $script:lastReadOnlyStatus) -eq $mode)) {
+            return $script:lastReadOnlyStatus
         }
-        return "control=observer`nRead-only observer (one native hero)`nsnapshot=waiting"
+        if ($mode -eq 'observer') {
+            return "control=observer`nRead-only observer (one native hero)`nsnapshot=waiting"
+        }
+        return "control=play`nsnapshot=waiting"
     }
     if (-not $snapshot) {
-        if ($script:lastObserverStatus) {
-            return $script:lastObserverStatus
-        }
+        if ($script:lastReadOnlyStatus) { return $script:lastReadOnlyStatus }
         $snapshot = "control=waiting for game status"
     }
-    $script:lastObserverStatus = ""
+    $script:lastReadOnlyStatus = ""
     if (Test-Path -LiteralPath $commandsPath) {
         return "queue=waiting for game update`n$snapshot"
     }
@@ -79,11 +95,19 @@ if ($Command -and $Command.Count -gt 0) {
     }
     $head = $Command[0]
     $action = if ($Command.Count -ge 2) { $Command[1] } else { "" }
+    if ($head -in 'input', 'play', 'enter', 'player' -and (Get-ReadOnlyMode (Get-ControlStatus))) {
+        Write-Error "The current observer or play client is read-only."
+        exit 2
+    }
     if ($head -eq "help" -and $Command.Count -eq 1) {
-        Add-ControlCommand "help"
+        if (-not (Get-ReadOnlyMode (Get-ControlStatus))) { Add-ControlCommand "help" }
         Write-Output "input <seat> <moveX> <moveY> [action ...]"
         Write-Output "player remove <slot|name> marks the seat offline. Use player add <same name> to reconnect."
-        Write-Output "queued help. Run h2t.ps1 status after the game polls to see the V1 action names."
+        if (Get-ReadOnlyMode (Get-ControlStatus)) {
+            Write-Output "Read-only client. Run h2t.ps1 status to view the latest snapshot."
+        } else {
+            Write-Output "queued help. Run h2t.ps1 status after the game polls to see the V1 action names."
+        }
         exit 0
     }
     if ($head -eq "input") {
@@ -97,17 +121,13 @@ if ($Command -and $Command.Count -gt 0) {
         exit 0
     }
     if ($head -eq "play") {
-        $sample = Join-Path (Split-Path $PSScriptRoot -Parent) "control\inputs.txt"
-        $dest = Join-Path $control "inputs.txt"
-        if (-not (Test-Path $dest) -and (Test-Path $sample)) {
-            Copy-Item $sample $dest
-        }
+        Initialize-Playback
         Add-ControlCommand "play"
         Write-Output "queued play"
         exit 0
     }
     if ($head -eq "enter") {
-        if ($Command.Count -gt 2 -or ($Command.Count -eq 2 -and $Command[1] -cnotmatch '^[A-Za-z0-9_]+\z')) {
+        if ($Command.Count -gt 2 -or ($Command.Count -eq 2 -and -not (Test-MapName $Command[1]))) {
             Write-Error "usage: h2t.ps1 enter [F_Test | F_Combat01]"
             exit 2
         }
@@ -144,119 +164,185 @@ if ($Command -and $Command.Count -gt 0) {
     exit 2
 }
 
-$page = @'
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<title>Hades2Together</title>
-<style>
-  body { font: 16px/1.5 sans-serif; margin: 32px; background: #141210; color: #f3ead7; }
-  h1 { font-size: 28px; margin: 0 0 8px; }
-  p { color: #b7aa96; max-width: 40em; }
-  button, input { font: inherit; padding: 8px 12px; margin: 0 8px 8px 0; }
-  button { background: #f3ead7; color: #141210; border: 0; cursor: pointer; }
-  input { background: #241f1a; color: #f3ead7; border: 1px solid #5c5144; }
-  pre { background: #241f1a; padding: 16px; white-space: pre-wrap; }
-</style>
-</head>
-<body>
-<h1 id="heading">多人游戏</h1>
-<pre id="status">读取中…</pre>
-<div id="controls" hidden>
-<p>命令会先排队，游戏开始更新后会执行并写回席位。</p>
-<button id="add" type="button">加入假玩家</button>
-<input id="name" placeholder="名字">
-<button id="addNamed" type="button">按名字加入</button>
-<input id="who" placeholder="席位或名字">
-<button id="remove" type="button">移除</button>
-</div>
-<script>
-async function refresh() {
-  const response = await fetch("/api/status");
-  const status = await response.text();
-  const observing = /^control=observer(?:\r?\n|$)/.test(status);
-  document.getElementById("heading").textContent = observing ? "权威状态" : "多人游戏";
-  document.getElementById("status").textContent = status;
-  document.getElementById("controls").hidden = observing;
+$webRoot = Join-Path $PSScriptRoot 'control-web'
+$historyRoot = Join-Path $control 'history'
+$historyFiles = @('run-output.txt', 'stages.txt', 'snapshots.tsv', 'door.log')
+$assets = @{
+    '/' = @('index.html', 'text/html')
+    '/index.html' = @('index.html', 'text/html')
+    '/control.css' = @('control.css', 'text/css')
+    '/control.js' = @('control.js', 'text/javascript')
 }
-async function send(url) {
-  await fetch(url, { method: "POST" });
-  refresh();
+
+function Write-Response($context, [int]$code, [string]$contentType, [string]$body) {
+    $bytes = [Text.Encoding]::UTF8.GetBytes($body)
+    $response = $context.Response
+    $response.StatusCode = $code
+    $response.ContentType = "$contentType; charset=utf-8"
+    $response.Headers['Cache-Control'] = 'no-store'
+    $response.Headers['X-Content-Type-Options'] = 'nosniff'
+    $response.Headers['Content-Security-Policy'] = "default-src 'self'; frame-ancestors 'none'; base-uri 'none'"
+    $response.ContentLength64 = $bytes.Length
+    $response.OutputStream.Write($bytes, 0, $bytes.Length)
+    $response.Close()
 }
-document.getElementById("add").onclick = function () { send("/api/player/add"); };
-document.getElementById("addNamed").onclick = function () {
-  var name = document.getElementById("name").value;
-  send("/api/player/add?name=" + encodeURIComponent(name));
-};
-document.getElementById("remove").onclick = function () {
-  var who = document.getElementById("who").value;
-  send("/api/player/remove?who=" + encodeURIComponent(who));
-};
-refresh();
-setInterval(refresh, 1000);
-</script>
-</body>
-</html>
-'@
+
+function Get-HistoryItem([string]$Path) {
+    $item = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if ($item -and -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        return $item
+    }
+}
+
+function Get-HistoryRun([string]$Id) {
+    if ($Id -cnotmatch '\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z') { return }
+    $root = Get-HistoryItem $historyRoot
+    if ($root -and $root.PSIsContainer) {
+        $run = Get-HistoryItem (Join-Path $root.FullName $Id)
+        if ($run -and $run.PSIsContainer) { return $run }
+    }
+}
+
+function Get-HistoryFiles($Run) {
+    foreach ($name in $historyFiles) {
+        $file = Get-HistoryItem (Join-Path $Run.FullName $name)
+        if ($file -and -not $file.PSIsContainer) { $file }
+    }
+}
+
+function Get-HistoryIndex {
+    $root = Get-HistoryItem $historyRoot
+    if (-not $root -or -not $root.PSIsContainer) { return }
+    foreach ($dir in (Get-ChildItem -LiteralPath $root.FullName -Directory | Sort-Object Name -Descending)) {
+        $run = Get-HistoryRun $dir.Name
+        if (-not $run) { continue }
+        $files = @(Get-HistoryFiles $run)
+        if ($files.Count) {
+            [ordered]@{ id = $run.Name; files = @($files | ForEach-Object Name) }
+        }
+    }
+}
+
+function Test-InputAxis([string]$Axis) {
+    $number = 0.0
+    return [double]::TryParse($Axis, [Globalization.NumberStyles]::Float,
+        [Globalization.CultureInfo]::InvariantCulture, [ref]$number) -and $number -ge -1 -and $number -le 1
+}
+
+function Get-WebQuery($Url) {
+    $query = @{}
+    foreach ($pair in $Url.Query.TrimStart('?').Split('&')) {
+        if (-not $pair) { continue }
+        $parts = $pair.Split('=', 2)
+        if ($parts.Length -ne 2) { return }
+        $key = [Uri]::UnescapeDataString($parts[0])
+        if ($query.ContainsKey($key)) { return }
+        $query[$key] = [Uri]::UnescapeDataString($parts[1].Replace('+', ' '))
+    }
+    return $query
+}
+
+function Get-WebCommand($Request) {
+    $query = Get-WebQuery $Request.Url
+    if ($null -eq $query) { return }
+    switch ($Request.Url.AbsolutePath) {
+        '/api/enter' {
+            $map = [string]$query['map']
+            if (-not $map) { $map = 'F_Test' }
+            if (Test-MapName $map) { return "enter $map" }
+        }
+        '/api/play' {
+            return 'play'
+        }
+        '/api/player/add' {
+            $name = ([string]$query['name']).Trim()
+            if ($name -match '[\x00-\x1F\x7F]') { return }
+            if ($name) { return "player add $name" }
+            return 'player add'
+        }
+        '/api/player/remove' {
+            $who = ([string]$query['who']).Trim()
+            if ($who -and $who -notmatch '[\x00-\x1F\x7F]') { return "player remove $who" }
+        }
+        '/api/input' {
+            $seat = [string]$query['seat']
+            $x = [string]$query['x']
+            $y = [string]$query['y']
+            $buttons = ([string]$query['actions']).Trim()
+            if ($seat -cnotmatch '\A[1-9][0-9]{0,15}\z' -or [long]$seat -gt 9007199254740991 -or
+                $x -match '\s' -or $y -match '\s' -or
+                -not (Test-InputAxis $x) -or -not (Test-InputAxis $y)) { return }
+            if ($buttons -and $buttons -cnotmatch '\A(Attack1|Attack2)( (Attack1|Attack2))?\z') { return }
+            return ("input $seat $x $y $buttons").TrimEnd()
+        }
+    }
+}
 
 $listener = New-Object System.Net.HttpListener
-$listener.Prefixes.Add("http://127.0.0.1:$Port/")
+$address = "http://127.0.0.1:$Port"
+$listener.Prefixes.Add("$address/")
 $listener.Start()
-Write-Output "http://127.0.0.1:$Port/"
-
-function Write-Response($context, $contentType, $body) {
-    $bytes = [Text.Encoding]::UTF8.GetBytes($body)
-    $context.Response.ContentType = $contentType
-    $context.Response.ContentLength64 = $bytes.Length
-    $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
-    $context.Response.Close()
-}
-
-function Get-QueryValue($url, $key) {
-    $query = $url.Query.TrimStart("?")
-    foreach ($pair in $query.Split("&")) {
-        $bits = $pair.Split("=", 2)
-        if ($bits.Length -eq 2 -and [Uri]::UnescapeDataString($bits[0]) -eq $key) {
-            return [Uri]::UnescapeDataString($bits[1].Replace("+", " "))
-        }
-    }
-    return ""
-}
-
-while ($listener.IsListening) {
-    $context = $listener.GetContext()
-    $path = $context.Request.Url.AbsolutePath
-    try {
-        if ($path -eq "/" -or $path -eq "/index.html") {
-            Write-Response $context "text/html; charset=utf-8" $page
-        } elseif ($path -eq "/api/status") {
-            Write-Response $context "text/plain; charset=utf-8" ((Get-ControlStatus) + "`n")
-        } elseif (($path -eq "/api/player/add" -or $path -eq "/api/player/remove") -and
-                  (Test-ObserverStatus (Get-ControlStatus))) {
-            $context.Response.StatusCode = 409
-            Write-Response $context "text/plain; charset=utf-8" "ERR observer is read-only`n"
-        } elseif ($path -eq "/api/player/add") {
-            $name = Get-QueryValue $context.Request.Url "name"
-            $line = "player add"
-            if ($name) { $line += " " + $name }
-            Add-ControlCommand $line
-            Write-Response $context "text/plain; charset=utf-8" "queued $line`n"
-        } elseif ($path -eq "/api/player/remove") {
-            $who = Get-QueryValue $context.Request.Url "who"
-            if (-not $who) {
-                Write-Response $context "text/plain; charset=utf-8" "ERR name required`n"
+Write-Output "$address/"
+try {
+    while ($listener.IsListening) {
+        $context = $listener.GetContext()
+        $request = $context.Request
+        $path = $request.Url.AbsolutePath
+        try {
+            if ($path -in '/api/player/add', '/api/player/remove', '/api/input', '/api/enter', '/api/play') {
+                if ($request.HttpMethod -ne 'POST') {
+                    $context.Response.Headers['Allow'] = 'POST'
+                    Write-Response $context 405 'text/plain' "ERR POST required`n"
+                } elseif (($request.Headers['Origin'] -and $request.Headers['Origin'] -cne $address) -or
+                          $request.Headers['Sec-Fetch-Site'] -eq 'cross-site') {
+                    Write-Response $context 403 'text/plain' "ERR local page required`n"
+                } elseif (Get-ReadOnlyMode (Get-ControlStatus)) {
+                    Write-Response $context 409 'text/plain' "ERR observer or play client is read-only`n"
+                } else {
+                    $line = Get-WebCommand $request
+                    if ($line) {
+                        if ($line -eq 'play') { Initialize-Playback }
+                        Add-ControlCommand $line
+                        Write-Response $context 200 'text/plain' "queued $line`n"
+                    } else {
+                        Write-Response $context 400 'text/plain' "ERR invalid command arguments`n"
+                    }
+                }
+            } elseif ($request.HttpMethod -ne 'GET') {
+                $context.Response.Headers['Allow'] = 'GET'
+                Write-Response $context 405 'text/plain' "ERR GET required`n"
+            } elseif ($assets.ContainsKey($path)) {
+                $asset, $type = $assets[$path]
+                Write-Response $context 200 $type ([IO.File]::ReadAllText((Join-Path $webRoot $asset)))
+            } elseif ($path -eq '/api/status') {
+                Write-Response $context 200 'text/plain' ((Get-ControlStatus) + "`n")
+            } elseif ($path -eq '/api/live') {
+                $status = Get-ControlStatus
+                $file = Get-Item -LiteralPath $statusPath -ErrorAction SilentlyContinue
+                $updated = if ($file) { $file.LastWriteTimeUtc.ToString('o') }
+                $body = @{ status = $status; updatedAt = $updated } | ConvertTo-Json -Compress
+                Write-Response $context 200 'application/json' $body
+            } elseif ($path -eq '/api/history') {
+                Write-Response $context 200 'application/json' (ConvertTo-Json -InputObject @(Get-HistoryIndex) -Depth 4 -Compress)
+            } elseif ($path -eq '/api/history/file') {
+                $query = Get-WebQuery $request.Url
+                $run = if ($query) { Get-HistoryRun $query['run'] }
+                $name = if ($query) { [string]$query['file'] }
+                $file = if ($run -and $name -cin $historyFiles) {
+                    Get-HistoryItem (Join-Path $run.FullName $name)
+                }
+                if ($file -and -not $file.PSIsContainer) {
+                    Write-Response $context 200 'text/plain' ([IO.File]::ReadAllText($file.FullName))
+                } else {
+                    Write-Response $context 404 'text/plain' "ERR record not found`n"
+                }
             } else {
-                $line = "player remove $who"
-                Add-ControlCommand $line
-                Write-Response $context "text/plain; charset=utf-8" "queued $line`n"
+                Write-Response $context 404 'text/plain' "ERR not found`n"
             }
-        } else {
-            $context.Response.StatusCode = 404
-            Write-Response $context "text/plain; charset=utf-8" "ERR not found`n"
+        } catch {
+            try { Write-Response $context 500 'text/plain' "ERR internal`n" } catch { $context.Response.Abort() }
         }
-    } catch {
-        $context.Response.StatusCode = 500
-        Write-Response $context "text/plain; charset=utf-8" "ERR internal`n"
     }
+} finally {
+    $listener.Close()
 }
