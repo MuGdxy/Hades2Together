@@ -172,27 +172,13 @@ local function readRoom(self, game, room, rewardsOnly)
     leaving = room.Leaving == true, exitsUnlocked = room.ExitsUnlocked == true,
   }
   if not rewardsOnly then view.exits = readExits(game.MapState) end
-  if load.boonOffer then StockBoon.readOptions(self, game, load) end
-  if load.boonClaims then
-    local live = StockBoon.current(game, load)
-    for _, receipt in ipairs(load.boonClaims) do
-      local claims = Boon.claims(receipt, not live or live.reward ~= receipt)
-      if #claims > 0 then
-        view.rewards = view.rewards or {}
-        view.rewards[#view.rewards + 1] = { id = receipt.id, kind = receipt.kind,
-          encounterId = receipt.encounterId, claims = claims }
-      end
-    end
-  end
+  local visibleReward
   local encounter = room.Encounter
   if type(encounter) == "table" and stockName(encounter.Name) then
     local reward = readAnchoredReward(game, room, encounter)
     local hasCompletion = type(encounter.Completed) == "boolean"
-    if not hasCompletion and not reward then
-      return view
-    end
     local id = load.encounters[encounter]
-    if not id then
+    if not id and (hasCompletion or reward) then
       load.encounterSerial = load.encounterSerial + 1
       id = load.encounterSerial
       load.encounters[encounter] = id
@@ -214,15 +200,24 @@ local function readRoom(self, game, room, rewardsOnly)
             id = offerId, encounterId = id }
         end
       end
-      view.rewards = view.rewards or {}
-      for _, prior in ipairs(view.rewards) do
-        if prior.id == offerId then
-          prior.objectId = reward.ObjectId
-          return view
-        end
-      end
-      view.rewards[#view.rewards + 1] = { id = offerId, encounterId = id, objectId = reward.ObjectId, kind = reward.Name }
+      visibleReward = { id = offerId, encounterId = id, objectId = reward.ObjectId, kind = reward.Name }
     end
+  end
+  local live = StockBoon.readOptions(self, game, load)
+  for _, receipt in ipairs(load.boonClaims or {}) do
+    local claims = Boon.claims(receipt, not live or live.reward ~= receipt)
+    if #claims > 0 then
+      local row = { id = receipt.id, kind = receipt.kind, encounterId = receipt.encounterId, claims = claims }
+      if visibleReward and visibleReward.id == row.id then
+        row.objectId, visibleReward = visibleReward.objectId, nil
+      end
+      view.rewards = view.rewards or {}
+      view.rewards[#view.rewards + 1] = row
+    end
+  end
+  if visibleReward then
+    view.rewards = view.rewards or {}
+    view.rewards[#view.rewards + 1] = visibleReward
   end
   return view
 end
@@ -232,11 +227,11 @@ end
 function Game:SelectBoon(roomId, rewardId, seat, choice)
   local run = rom.game.CurrentRun
   local load = run and self:LoadedRoom(run.CurrentRoom)
-  local offer = StockBoon.current(rom.game, load)
-  if not self.session or not Session.isAuthority(self.session) or not offer or load.id ~= roomId
-    or offer.id ~= rewardId or not offer.reward then return nil end
+  if not self.session or not Session.isAuthority(self.session) or not load or load.id ~= roomId then return nil end
   local slot = self.session.slots[seat]
   if not slot or not slot.connected then return nil end
+  local offer = StockBoon.readOptions(self, rom.game, load)
+  if not offer or offer.id ~= rewardId or not offer.reward then return nil end
   return Boon.select(self.session, offer.reward, seat, self:BindHero(seat), choice)
 end
 

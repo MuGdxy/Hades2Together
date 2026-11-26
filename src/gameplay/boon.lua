@@ -47,10 +47,17 @@ end
 function Boon.select(session, reward, seat, actor, choice)
   local entry = reward.seats and reward.seats[seat]
   if not entry or entry.slot ~= session.slots[seat] or entry.actor ~= actor or entry.consumed
-    or not contains(entry.options, choice) then return nil end
+    or not entry.options or not contains(entry.options, choice) then return nil end
   if entry.pending then return entry.selected == choice and entry.pending or nil end
   entry.pending, entry.selected = { seat = seat }, choice
   return entry.pending
+end
+
+-- A replacement roll may exist before its valid subset is known. Retain
+-- the slot/actor binding and any completed receipt across that interval.
+function Boon.withholdOptions(reward, seat)
+  local entry = reward.seats and reward.seats[seat]
+  if entry and not entry.consumed then entry.options, entry.pending, entry.selected = nil, nil, nil end
 end
 
 function Boon.cancel(reward, selection)
@@ -79,7 +86,7 @@ function Boon.claims(reward, consumedOnly)
     claims[1] = { playerId = reward.claim.playerId, state = reward.claim.state, choice = reward.claim.choice }
   end
   for seat, entry in pairs(reward.seats or {}) do
-    if entry.consumed or not consumedOnly then
+    if entry.consumed or (entry.options and not consumedOnly) then
       local state = entry.consumed and "consumed" or entry.pending and "claiming" or "eligible"
       claims[#claims + 1] = { playerId = seat, state = state, choice = entry.consumed,
         selected = entry.selected, options = { table.unpack(entry.options) } }

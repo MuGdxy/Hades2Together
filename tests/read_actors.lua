@@ -458,10 +458,69 @@ do
   game.LootObjects[offer.ObjectId], game.MapState.RoomRequiredObjects[offer.ObjectId] = offer, offer
   game.MapState.ActiveObstacles[offer.ObjectId] = nil
   nativeName = offer.Name
-  assert(capture:RoomRewards()[1].id == spawned.id)
-  local screen = { Name = "UpgradeChoice", Source = offer, ChoiceMade = true, BlockedIndexes = {} }
   local data = { Name = "PoseidonWeaponBoon" }
+  hero.Traits, hero.TraitDictionary, hero.BoonData = {}, {}, {}
+  offer.GodLoot = true
+  game.ScreenData = { UpgradeChoice = { MaxChoices = 3 } }
+  local function trait(name) return { Type = "Trait", ItemName = name } end
+  local stock = setmetatable({
+    CurrentRun = game.CurrentRun, ScreenData = game.ScreenData, Import = function() end,
+    LootData = { PoseidonUpgrade = offer }, GameState = { Flags = {} },
+    TraitData = { PoseidonCastBoon = { Slot = "Ranged" }, [data.Name] = { Slot = "Melee" },
+      PoseidonSpecialBoon = { Slot = "Secondary" } },
+    IsFateValid = function() return false end,
+  }, { __index = _G })
+  if arg[1] then
+    for _, name in ipairs({ "UtilityLogic", "TraitLogic", "UpgradeChoiceLogic" }) do
+      assert(loadfile(arg[1] .. "/" .. name .. ".lua", "t", stock))()
+    end
+    offer.PriorityUpgrades = { "PoseidonCastBoon", data.Name, "PoseidonSpecialBoon" }
+    stock.TraitRarityData = { BoonRarityRollOrder = {}, RarityValues = { Common = 1 } }
+    stock.MetaUpgradeData = { BanUnpickedBoonsShrineUpgrade = { ChangeValue = 0 } }
+    stock.IsRarityForcedCommon = function() return true end
+    stock.IsGameStateEligible = function() return false end
+    stock.IsTraitEligible = function() return true end
+    stock.SetTraitsOnLoot(offer)
+    game.CalcNumLootChoices = stock.CalcNumLootChoices
+  else
+    offer.UpgradeOptions = { trait("PoseidonCastBoon"), trait(data.Name), trait("PoseidonSpecialBoon") }
+    game.CalcNumLootChoices = function() return hero.Traits[1] and 2 or 3 end
+  end
+  local roomId = capture.roomLoad.id
+  local first = capture:RoomRewards()[1]
+  assert(first.id == spawned.id and #first.claims == 1 and #first.claims[1].options == 3)
+  assert(not capture:SelectBoon(roomId, spawned.id, 2, data.Name))
+  assert(capture:SelectBoon(roomId, spawned.id, 1, data.Name))
+  hero.Traits[1] = { RestrictBoonChoices = true }
+  assert(not capture:SelectBoon(roomId, spawned.id, 1, data.Name))
+  assert(capture:RoomRewards()[1].claims == nil)
+  local screen = { Name = "UpgradeChoice", Source = offer, ChoiceMade = true }
+  game.ActiveScreens, game.ScreenAnchors = { UpgradeChoice = screen }, { ChoiceScreen = screen }
+  game.CurrentLootData = offer
+  if arg[1] then
+    stock.GetGlobalRng = function() return { Random = function() return 1 end } end
+    stock.CreateUpgradeChoiceButton = function() coroutine.yield("after stock draw and sort") end
+    local ok, boundary = coroutine.resume(coroutine.create(stock.CreateBoonLootButtons), screen, offer)
+    assert(ok and boundary == "after stock draw and sort", tostring(boundary))
+    assert(offer.UpgradeOptions[3].ItemName == "PoseidonCastBoon")
+    assert(screen.BlockedIndexes[1] == nil and screen.BlockedIndexes[2] == 3)
+  else
+    screen.BlockedIndexes = { [2] = 3 }
+  end
+  assert(capture:RoomRewards()[1].claims == nil) -- indexed row still awaiting its stock lock
+  offer.UpgradeOptions[3].Blocked = true -- CreateUpgradeChoiceButton's write to the sorted row
+  assert(#capture:RoomRewards()[1].claims[1].options == 2)
+  assert(not capture:SelectBoon(roomId, spawned.id, 1, offer.UpgradeOptions[3].ItemName))
+  game.ScreenAnchors, game.ActiveScreens = {}, {}
+  assert(capture:SelectBoon(roomId, spawned.id, 1, data.Name))
+  offer.UpgradeOptions = { trait(data.Name), trait("PoseidonSpecialBoon"), trait("PoseidonCastBoon") }
+  assert(not capture:SelectBoon(roomId, spawned.id, 1, data.Name)) -- reroll, before next snapshot
+  assert(capture:RoomRewards()[1].claims == nil)
+  hero.Traits, screen.BlockedIndexes = {}, {}
+  local previousRoll = assert(capture:SelectBoon(roomId, spawned.id, 1, data.Name))
   offer.UpgradeOptions = { { Type = "Trait", ItemName = data.Name } }
+  assert(capture:RoomRewards()[1].claims[1].state == "eligible")
+  assert(assert(capture:SelectBoon(roomId, spawned.id, 1, data.Name)) ~= previousRoll)
   local button = { Index = 1, Screen = screen, LootData = offer, Data = data, Type = "Trait",
     OnPressedFunctionName = "HandleUpgradeChoiceSelection" }
   screen.UpgradeButtons = { button }
@@ -499,7 +558,6 @@ do
   hero.Traits, button.LootData = {}, offer
   -- Reuse the authority catalogue after removing the presentation objects.
   game.ScreenAnchors, game.ActiveScreens = {}, {}
-  local roomId = capture.roomLoad.id
   assert(not capture:SelectBoon(roomId + 1, spawned.id, 1, data.Name))
   assert(not capture:SelectBoon(roomId, spawned.id, 1, "NotOffered"))
   capture.session.slots[1].connected = false

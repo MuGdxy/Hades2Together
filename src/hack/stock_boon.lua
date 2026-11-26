@@ -32,25 +32,72 @@ function Stock.current(g, load)
   end
 end
 
-function Stock.readOptions(game, g, load)
-  local run, offer = g.CurrentRun, Stock.current(g, load)
-  if not game.session or not run or not run.Hero or not offer
-    or run.CurrentRoom ~= load.room or game:BindHero(game.hostSeat) ~= run.Hero.ObjectId then return end
-  local source = offer.source
+local function choiceScreen(g, source)
   local screen = g.ScreenAnchors and g.ScreenAnchors.ChoiceScreen
-  if not screen or not g.ActiveScreens or g.ActiveScreens[screen.Name] ~= screen
-    or screen.Source ~= source or g.CurrentLootData ~= source or source.StackOnly or source.UpgradeOnPick
-    or type(source.UpgradeOptions) ~= "table" or type(screen.BlockedIndexes) ~= "table" then return end
-  local blocked, options = {}, {}
-  for _, index in ipairs(screen.BlockedIndexes) do blocked[index] = true end
-  for i, item in ipairs(source.UpgradeOptions) do
-    if item.Type == "Trait" and not blocked[i] and not item.Blocked and not item.TraitToReplace then
+  if screen and g.ActiveScreens and g.ActiveScreens[screen.Name] == screen
+    and screen.Source == source and g.CurrentLootData == source then return screen end
+end
+
+local function generatedOptions(g, offer)
+  local source = offer.source
+  local items = source.UpgradeOptions
+  if type(items) ~= "table" or source.StackOnly or source.UpgradeOnPick then return end
+  local ok, limit = pcall(g.CalcNumLootChoices, source)
+  if not ok or type(limit) ~= "number" or limit % 1 ~= 0 or limit < 0 then return end
+
+  local count, marked = 0, 0
+  for index, item in pairs(items) do
+    if type(index) ~= "number" or index % 1 ~= 0 or index < 1 or index > #items
+      or type(item) ~= "table" then return end
+    count = count + 1
+    if item.Blocked then marked = marked + 1 end
+  end
+  if count ~= #items then return end
+
+  -- Retail draws blocked indices before sorting, then marks the sorted loot
+  -- rows as each button is built. LogUpgradeChoice reads those same rows.
+  local screen = choiceScreen(g, source)
+  if screen then
+    offer.locksObserved = false
+    if type(screen.BlockedIndexes) == "table" then
+      local lockedCount = 0
+      -- RemoveRandomValue removes a key without compacting after its last draw.
+      for _, index in pairs(screen.BlockedIndexes) do
+        if not items[index] or not items[index].Blocked then return end
+        lockedCount = lockedCount + 1
+      end
+      if lockedCount > 0 and lockedCount >= count - limit then
+        offer.locksObserved = true
+      end
+    end
+  end
+  if limit == 0 then return {} end
+  if count > limit and (not offer.locksObserved or marked < count - limit) then return end
+  local options = {}
+  for _, item in ipairs(items) do
+    if item.Type == "Trait" and not item.Blocked and not item.TraitToReplace then
       options[#options + 1] = item.ItemName
     end
   end
-  if Boon.setOptions(game.session, Stock.reward(load), game.hostSeat, run.Hero.ObjectId, options) then
-    return screen, offer
+  return options
+end
+
+function Stock.readOptions(game, g, load)
+  local run, offer = g.CurrentRun, Stock.current(g, load)
+  if not offer or not game.session then return end
+  if offer.candidates ~= offer.source.UpgradeOptions then
+    if offer.reward then Boon.withholdOptions(offer.reward, game.hostSeat) end
+    offer.candidates, offer.locksObserved = offer.source.UpgradeOptions, false
   end
+  if run and run.CurrentRoom == load.room and run.Hero and run.Hero.ObjectId
+    and game:BindHero(game.hostSeat) == run.Hero.ObjectId then
+    local options = generatedOptions(g, offer)
+    if options and Boon.setOptions(game.session, Stock.reward(load), game.hostSeat, run.Hero.ObjectId, options) then
+      return offer, true
+    end
+  end
+  if offer.reward then Boon.withholdOptions(offer.reward, game.hostSeat) end
+  return offer, false
 end
 
 local function selected(game, g, unit, data, args)
@@ -59,7 +106,9 @@ local function selected(game, g, unit, data, args)
     or args.TraitData ~= data or data.TraitToReplace then return end
   local load = game:LoadedRoom(run.CurrentRoom)
   if not load then return end
-  local screen, offer = Stock.readOptions(game, g, load)
+  local offer, resolved = Stock.readOptions(game, g, load)
+  if not resolved then return end
+  local screen = choiceScreen(g, offer.source)
   if not screen or screen.ChoiceMade ~= true then return end
   for _, trait in pairs(unit.Traits or {}) do
     if trait.Name == data.Name then return end
