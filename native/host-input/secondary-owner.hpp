@@ -233,7 +233,7 @@ public:
         thread_ = GetCurrentThreadId();
         busy_ = true;
         const auto build = [&]() -> const char* {
-            if (!descriptor_.load(read<Addr>(host->unit+0x520).value_or(0),xy)) return "private descriptor refused";
+            if (const char* failure = descriptor_.load(read<Addr>(host->unit+0x520).value_or(0),xy)) return failure;
             if (!player_.create()) return "private Player constructor refused";
             const auto counter = read<int>(tables_.world+0x14);
             if (!counter || *counter < 0 || *counter == INT_MAX || world_object(tables_.world,*counter+1) ||
