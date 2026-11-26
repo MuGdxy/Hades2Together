@@ -169,6 +169,19 @@ function Game:LoadedRoom(room)
   return load
 end
 
+local guestBoonName = "PoseidonWeaponBoon"
+
+local function guestCommandRound(reward, seat)
+  local member = reward.guests and reward.guests[seat]
+  local entry = reward.seats and reward.seats[seat]
+  if not member or not member.slot.connected or not entry or (entry.selected and entry.selected ~= guestBoonName) then return end
+  local roll = member.rolls[member.round]
+  if not roll.rarities or not roll.rarities[guestBoonName] then return end
+  for _, option in ipairs(entry.options or {}) do
+    if option == guestBoonName then return member.round, option end
+  end
+end
+
 local function readRoom(self, game, room, rewardsOnly)
   local load = self:LoadedRoom(room)
   if not load then return nil end
@@ -218,6 +231,15 @@ local function readRoom(self, game, room, rewardsOnly)
   for _, receipt in ipairs(load.boonClaims or {}) do
     local claims = Boon.claims(receipt, not live or live.reward ~= receipt)
     if #claims > 0 then
+      if rewardsOnly and live and live.reward == receipt then
+        for _, claim in ipairs(claims) do
+          local round, option = guestCommandRound(receipt, claim.playerId)
+          if round and claim.state ~= "consumed" then
+            claim.opportunity = table.concat({ view.id, receipt.id, round }, "/")
+            claim.grantOption = option
+          end
+        end
+      end
       local row = { id = receipt.id, kind = receipt.kind, encounterId = receipt.encounterId, claims = claims }
       if visibleReward and visibleReward.id == row.id then
         row.objectId, visibleReward = visibleReward.objectId, nil
@@ -235,7 +257,7 @@ end
 
 -- Authority intent only. The caller supplies the authenticated seat; only an
 -- independently observed grant can turn this selection into a consumed claim.
-function Game:SelectBoon(roomId, rewardId, seat, choice)
+function Game:SelectBoon(roomId, rewardId, seat, choice, round)
   local run = rom.game.CurrentRun
   local load = run and self:LoadedRoom(run.CurrentRoom)
   if not self.session or not Session.isAuthority(self.session) or not load or load.id ~= roomId then return nil end
@@ -243,6 +265,15 @@ function Game:SelectBoon(roomId, rewardId, seat, choice)
   if not slot or not slot.connected then return nil end
   local offer = StockBoon.readOptions(self, rom.game, load)
   if not offer or offer.id ~= rewardId or not offer.reward then return nil end
+  if round ~= nil then
+    if choice ~= guestBoonName or guestCommandRound(offer.reward, seat) ~= round then return nil end
+    local entry = offer.reward.seats and offer.reward.seats[seat]
+    if entry and entry.consumed == choice then
+      local member = offer.reward.guests[seat]
+      if entry.slot == slot and self:BoundGuestUnit(seat) == member.unit then return entry.grantedSelection end
+      return nil
+    end
+  end
   local selection = Boon.select(self.session, offer.reward, seat, self:BindHero(seat), choice)
   local member = selection and offer.reward.guests and offer.reward.guests[seat]
   if member then

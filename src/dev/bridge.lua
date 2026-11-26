@@ -9,11 +9,11 @@ function Bridge.controlRoot()
   return home .. "\\Hades2Together"
 end
 
-function Bridge.applyLines(console, lines, submitInput)
+function Bridge.applyLines(console, lines, submitInput, submitBoon)
   local results = {}
   for _, line in ipairs(lines) do
     if line ~= "" then
-      results[#results + 1] = Console.execute(console, line, submitInput)
+      results[#results + 1] = Console.execute(console, line, submitInput, submitBoon)
     end
   end
   return results
@@ -32,12 +32,13 @@ function Bridge.claimLines(rewards)
         .. (claim.choice and " choice=" .. claim.choice or "")
         .. (claim.selected and " selected=" .. claim.selected or "")
         .. (claim.options and claim.state ~= "consumed" and " options=" .. table.concat(claim.options, ",") or "")
+        .. (claim.opportunity and " opportunity=" .. claim.opportunity .. " grantOption=" .. claim.grantOption or "")
     end
   end
   return lines
 end
 
-function Bridge.sync(console, commandsPath, submitInput)
+function Bridge.sync(console, commandsPath, submitInput, submitBoon)
   local lines = {}
   local taken = commandsPath .. ".take"
   if os.rename(commandsPath, taken) then
@@ -54,7 +55,7 @@ function Bridge.sync(console, commandsPath, submitInput)
       end
     end
   end
-  return Bridge.applyLines(console, lines, submitInput)
+  return Bridge.applyLines(console, lines, submitInput, submitBoon)
 end
 
 return Bridge

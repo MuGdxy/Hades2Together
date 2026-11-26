@@ -46,6 +46,19 @@ function Test-MapName([string]$Name) {
     return $Name -cmatch '^[A-Za-z0-9_]+\z'
 }
 
+function Get-BoonCommand([string]$Seat, [string]$Opportunity, [string]$Option) {
+    $ids = $Opportunity.Split('/')
+    if ($ids.Count -ne 3 -or $Option -cnotmatch '\A[A-Za-z0-9_]{1,128}\z') { return }
+    foreach ($id in (@($Seat) + $ids)) {
+        if ($id -cnotmatch '\A[1-9][0-9]{0,15}\z' -or [long]$id -gt 9007199254740991) { return }
+    }
+    return "boon $Seat $Opportunity $Option"
+}
+
+function Test-BoonAuthority([string]$Snapshot) {
+    return ($Snapshot -cmatch '(?m)^control=polling\r?$' -and $Snapshot -cmatch '(?m)^OK role=serve(?:\+play)? players=')
+}
+
 function Get-ReadOnlyMode([string]$Snapshot) {
     if ($Snapshot -cmatch '\Acontrol=(observer|play)(?:\r?\n|\z)') { return $Matches[1] }
     if ($Snapshot -and 'control=play'.StartsWith($Snapshot, [StringComparison]::Ordinal)) { return 'play' }
@@ -102,12 +115,27 @@ if ($Command -and $Command.Count -gt 0) {
     if ($head -eq "help" -and $Command.Count -eq 1) {
         if (-not (Get-ReadOnlyMode (Get-ControlStatus))) { Add-ControlCommand "help" }
         Write-Output "input <seat> <moveX> <moveY> [action ...]"
+        Write-Output "boon <seat> <room/reward/round> <option>"
         Write-Output "player remove <slot|name> marks the seat offline. Use player add <same name> to reconnect."
         if (Get-ReadOnlyMode (Get-ControlStatus)) {
             Write-Output "Read-only client. Run h2t.ps1 status to view the latest snapshot."
         } else {
             Write-Output "queued help. Run h2t.ps1 status after the game polls to see the V1 action names."
         }
+        exit 0
+    }
+    if ($head -eq "boon") {
+        if (-not (Test-BoonAuthority (Get-ControlStatus))) {
+            Write-Error "Boon claims require the local polling authority."
+            exit 2
+        }
+        $line = if ($Command.Count -eq 4) { Get-BoonCommand $Command[1] $Command[2] $Command[3] }
+        if (-not $line) {
+            Write-Error "usage: h2t.ps1 boon <seat> <room/reward/round> <option>"
+            exit 2
+        }
+        Add-ControlCommand $line
+        Write-Output "queued $line"
         exit 0
     }
     if ($head -eq "input") {
@@ -160,7 +188,7 @@ if ($Command -and $Command.Count -gt 0) {
         Write-Output "queued $line"
         exit 0
     }
-    Write-Error "usage: h2t.ps1 [help | input <seat> <moveX> <moveY> [action ...] | enter [map] | play | status | players | player add [name] | player remove <slot|name>]"
+    Write-Error "usage: h2t.ps1 [help | input <seat> <moveX> <moveY> [action ...] | boon <seat> <room/reward/round> <option> | enter [map] | play | status | players | player add [name] | player remove <slot|name>]"
     exit 2
 }
 
@@ -246,6 +274,12 @@ function Get-WebCommand($Request) {
     $query = Get-WebQuery $Request.Url
     if ($null -eq $query) { return }
     switch ($Request.Url.AbsolutePath) {
+        '/api/boon' {
+            if ($query.Count -eq 3 -and $query.ContainsKey('seat') -and $query.ContainsKey('opportunity') -and
+                $query.ContainsKey('option') -and -not $Request.HasEntityBody) {
+                return (Get-BoonCommand $query['seat'] $query['opportunity'] $query['option'])
+            }
+        }
         '/api/enter' {
             $map = [string]$query['map']
             if (-not $map) { $map = 'F_Test' }
@@ -289,15 +323,18 @@ try {
         $request = $context.Request
         $path = $request.Url.AbsolutePath
         try {
-            if ($path -in '/api/player/add', '/api/player/remove', '/api/input', '/api/enter', '/api/play') {
+            if ($path -in '/api/player/add', '/api/player/remove', '/api/input', '/api/enter', '/api/play', '/api/boon') {
+                $snapshot = Get-ControlStatus
                 if ($request.HttpMethod -ne 'POST') {
                     $context.Response.Headers['Allow'] = 'POST'
                     Write-Response $context 405 'text/plain' "ERR POST required`n"
                 } elseif (($request.Headers['Origin'] -and $request.Headers['Origin'] -cne $address) -or
                           $request.Headers['Sec-Fetch-Site'] -eq 'cross-site') {
                     Write-Response $context 403 'text/plain' "ERR local page required`n"
-                } elseif (Get-ReadOnlyMode (Get-ControlStatus)) {
+                } elseif (Get-ReadOnlyMode $snapshot) {
                     Write-Response $context 409 'text/plain' "ERR observer or play client is read-only`n"
+                } elseif ($path -eq '/api/boon' -and -not (Test-BoonAuthority $snapshot)) {
+                    Write-Response $context 409 'text/plain' "ERR local polling authority required`n"
                 } else {
                     $line = Get-WebCommand $request
                     if ($line) {

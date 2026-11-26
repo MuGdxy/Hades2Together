@@ -83,7 +83,7 @@ local function submitSample(words, submitInput, maxPlayers)
   return "OK input " .. seat
 end
 
-function Console.execute(console, line, submitInput)
+function Console.execute(console, line, submitInput, submitBoon)
   if type(line) ~= "string" then
     return "ERR empty"
   end
@@ -101,12 +101,27 @@ function Console.execute(console, line, submitInput)
 
   if head == "help" then
     return "OK commands: help | status | players | player add [name] | player remove <slot|name> | enter [map] | play"
-      .. " | input <seat> <moveX> <moveY> [action ...]; V" .. Actions.VERSION .. " actions: " .. Actions.names()
+      .. " | boon <seat> <room/reward/round> <option> | input <seat> <moveX> <moveY> [action ...]; V" .. Actions.VERSION .. " actions: " .. Actions.names()
       .. "; player remove marks the seat offline; player add with the same name reconnects it"
   end
 
   if head == "input" then
     return submitSample(words, submitInput, Session.capacity(session))
+  end
+
+  if head == "boon" then
+    if not Session.isAuthority(session) or not submitBoon then return "ERR boon requires local authority" end
+    local seat = tonumber((words[2] or ""):match("^[1-9]%d*$") or "")
+    local room, reward, round = (words[3] or ""):match("^([1-9]%d*)/([1-9]%d*)/([1-9]%d*)$")
+    room, reward, round = tonumber(room), tonumber(reward), tonumber(round)
+    if #words ~= 4 or not Session.validSeat(seat, Session.capacity(session)) or not Session.validSeat(room)
+      or not Session.validSeat(reward) or not Session.validSeat(round) or #words[4] > 128 or not words[4]:match("^[%w_]+$") then
+      return "ERR usage: boon <seat> <room/reward/round> <option>"
+    end
+    local id, reason = submitBoon(seat, room, reward, round, words[4])
+    local request = "boon seat=" .. seat .. " opportunity=" .. words[3] .. " option=" .. words[4]
+    if not id then return "ERR " .. request .. " " .. tostring(reason) end
+    return "OK " .. request .. " instance=" .. id
   end
 
   if head == "play" then

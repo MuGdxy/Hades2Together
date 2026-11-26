@@ -44,7 +44,8 @@ label { color: var(--muted); }
 .player .up { color: var(--online); }
 .player dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 9px; margin-block: 10px; }
 .player dd { margin: 0; overflow-wrap: anywhere; }
-.input, .columns, details.panel, .history { margin-top: 14px; }
+.input, .columns, details.panel, .history, #boons { margin-top: 14px; }
+#boonClaims button { margin-top: 8px; }
 .columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .history { grid-template-columns: minmax(180px, .36fr) minmax(0, 1fr); }
 #runs { display: grid; gap: 8px; }

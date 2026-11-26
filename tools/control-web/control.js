@@ -26,6 +26,8 @@ function readStatus(status) {
   }).filter((guest) => guest.start >= 0).sort((a, b) => a.start - b.start);
   const guestRows = new Map(guests.map(({ player, end }, index) =>
     [player, body.slice(end, guests[index + 1]?.start)]));
+  const claims = lines.filter((line) => line.startsWith("claim reward=")).map((line) =>
+    Object.fromEntries([...line.matchAll(/(?:^| )(\w+)=([^ ]*)/g)].map(([, key, value]) => [key, value])));
   const hostInfo = body.slice(0, guests[0]?.start);
   for (const player of players) {
     const guest = guestRows.get(player);
@@ -41,10 +43,10 @@ function readStatus(status) {
     player.publication = info.match(/\bpublication=(\d+)/)?.[1];
     player.state = guest?.split(" id=")[0] ?? (isHost ? hostStatus : undefined);
   }
-  return { mode, room: field("room") || map, tick: field("tick"), players,
+  return { mode, room: field("room") || map, tick: field("tick"), players, claims,
     connection: field("connection"), seat: field("seat"), sent: field("sentSeq"), reason: field("reason"),
     actors: lines.filter((line) => /^(hero|enemy) id=/.test(line)),
-    receipts: lines.filter((line) => /^(OK |ERR |claim reward=)/.test(line) &&
+    receipts: lines.filter((line) => /^(OK |ERR |claim reward=.* state=consumed )/.test(line) &&
       !/^OK (role=|none$|\d+:)/.test(line)).map((line) => line.replace(
       /^claim reward=(\d+) kind=(\S+) seat=(\d+) state=consumed choice=(.+)$/,
       "席 $3 已领取 $4（$2，奖励 $1）")).concat(
@@ -91,6 +93,32 @@ function renderPlayers(status) {
   $("players").replaceChildren(...(cards.length ? cards : [node("p", "当前状态未提供角色或名册。")]));
 }
 
+function renderBoons(claims) {
+  const panel = $("boons");
+  const key = JSON.stringify([readOnly, claims]);
+  if (panel.dataset.view === key) return;
+  panel.dataset.view = key;
+  panel.hidden = claims.length === 0;
+  $("boonClaims").replaceChildren(...claims.map((claim) => {
+    const card = node("article", "");
+    card.className = "player";
+    card.append(node("h3", "席 " + claim.seat + " · 奖励 " + claim.reward));
+    if (claim.state === "consumed") {
+      card.append(node("p", "已领取 · " + claim.choice));
+    } else {
+      const options = (claim.options || "").split(",").filter(Boolean);
+      card.append(node("p", "候选 · " + (options.join("、") || "暂无")));
+      if (claim.selected) card.append(node("p", "待确认 · " + claim.selected));
+      if (!readOnly && claim.opportunity && options.includes(claim.grantOption)) {
+        card.append(button("领取 " + claim.grantOption, () => send("boon", {
+          seat: claim.seat, opportunity: claim.opportunity, option: claim.grantOption
+        })));
+      }
+    }
+    return card;
+  }));
+}
+
 function rememberStatus(text, updatedAt) {
   const details = node("details", "");
   details.append(node("summary", updatedAt ? new Date(updatedAt).toLocaleTimeString() : "本页读取"),
@@ -123,6 +151,7 @@ async function refresh() {
     $("receipts").textContent = view.receipts.join("\n") || "—";
     $("raw").textContent = status;
     if (changed) renderPlayers(view);
+    renderBoons(view.claims);
     if (status !== lastStatus) rememberStatus(status, updatedAt);
     lastStatus = status;
     $("liveError").hidden = true;
@@ -131,6 +160,7 @@ async function refresh() {
     lastStatus = undefined;
     for (const id of ["join", "input", "gameCommands"]) $(id).hidden = true;
     $("players").replaceChildren(node("p", "状态读取暂不可用。上次读数见下方记录。"));
+    renderBoons([]);
     $("liveError").textContent = "读取失败 · " + error.message;
     $("liveError").hidden = false;
   } finally {
