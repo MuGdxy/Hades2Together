@@ -64,6 +64,16 @@ python tests/net_smoke.py --lua lua --stock-room
 
 从仓库根目录运行 `texlua tests/read_actors.lua` 可重放这一接口。提供本机游戏的脚本目录作为参数（`texlua tests/read_actors.lua "<游戏目录>/Content/Scripts"`），正例将执行该版本原版的选择、授予及特质插入函数，界面与引擎调用仍由夹具提供。归档实机已确认该房能出现波塞冬奖励；领取与席位投影在本次接口回放中验证。
 
+### 访客触发普通波塞冬祝福时的受益角色
+
+安装版的 `OnUsed` 从 `triggerArgs.UserTable` 取得交互者，将其传给 `UseLoot(usee, args, user)`。正常通过检查后，`UseLoot` 调用 `HandleLootPickup(CurrentRun, usee, args)`，在这里丢失了独立的 `user` 参数。后者调用 `OpenUpgradeChoiceMenu(loot, args)`。见 `InteractLogic.lua:303–343, 621–676, 693–733`。
+
+选项构建时，`CreateUpgradeChoiceButton` 明确以 `CurrentRun.Hero` 生成特质数据。普通新增分支在 `HandleUpgradeChoiceSelection` 调用 `AddTraitToHero`，最终执行 `AddTraitData(CurrentRun.Hero, traitData, args)`。正式二席绑定能取得真实访客 Unit、向对应 handler 提交输入；选择和授予函数没有使用该绑定来决定受益角色。见 `UpgradeChoiceLogic.lua:294, 940–974`、`TraitLogic.lua:471–493` 和 `native/host-input/observe-sampler-lua.hpp`。
+
+低层的 `AddTrait(unit, ...)` 可以向指定 Unit 的 `Traits` 插入实例，直接调用会跳过原版选择。以 `PoseidonWeaponBoon` 为例，实际溅射通过 `OnEnemyDamagedAction` 触发：`CheckOnDamagedPowers` 在当前英雄或其法术召唤物攻击时遍历当前英雄的特质；`CheckPoseidonSplash` 创建弹体时也使用当前英雄的 ObjectId。访客 PlayerUnit 有一条同名特质记录，仍不足以证明其攻击获得了溅射。见 `TraitLogic.lua:859–911`、`TraitData_Poseidon.lua:27–34`、`PowersLogic.lua:148–180, 3813–3817`。
+
+上面的安装脚本回放以夹具访客触发原版 `OnUsed`，在菜单界面边界提交现有选择按钮。断言覆盖原版调用只给宿主新增特质、访客特质表为空、快照只包含宿主席的一条已领取记录。游戏内访客操作及战斗效果仍未实测。访客领取需要原版选择可携带指定受益 Unit，并在实际效果消费处沿用该角色；当前接口缺少这条路径。
+
 ## 后续原版接入
 
 奖励均等指同一次经过验证的原版机会对每个符合条件的参与者提供一次原版交互。每席由该席原版上下文执行检查和选择，结果可以不同。已证实的零售流程只有当前英雄的赋予上下文；多人归属、同时选择或依次选择的原版入口仍待验证。需要确认 `OnUsed` 的真实角色/物件映射、原版选项归属和提交回执。用房间实例、遭遇实例、奖励机会和已绑定席位组合关联回执；等原版确认再从 `claiming` 进入 `consumed`。不得由网络自行选择或生成奖励，也不得复制一次 `AddTraitToHero` 结果、切换当前英雄或替原版开放出口。

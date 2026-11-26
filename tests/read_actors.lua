@@ -500,14 +500,19 @@ do
     -- Use the installed game's Lua for the selection, grant, insertion and return.
     -- Engine/UI calls are doubles. Pause at LogUpgradeChoice after the grant.
     setmetatable(game, { __index = _G })
-    for _, module in ipairs({ "TraitLogic", "UpgradeChoiceLogic" }) do
+    local onUsed
+    game.OnUsed = function(event) onUsed = event[1] end
+    for _, module in ipairs({ "TraitLogic", "UpgradeChoiceLogic", "InteractLogic" }) do
       assert(loadfile(arg[1] .. "/" .. module .. ".lua", "t", game))()
     end
     stockGrant, game.AddTraitData = game.AddTraitData, wrapped
     game.GameState = { TraitsTaken = {} }
     for _, name in ipairs({ "EquipReferencedWeapons", "thread", "RemoveStoreItemPin",
       "UpdateHeroTraitDictionary", "ProcessHeroTraitChanges", "CheckActivatedTraits",
-      "ClampSprintSpeed", "MergeWeaponDataOverride" }) do game[name] = function() end end
+      "ClampSprintSpeed", "MergeWeaponDataOverride", "RecordUse", "RunEventsGeneric",
+      "AddInputBlock", "RemoveInputBlock", "SetPlayerInvulnerable", "AddPlayerImmuneToForce",
+      "PlayInteractAnimation", "AddTimerBlock", "RemoveTimerBlock", "GodLootPickupPresentation",
+      "LootPickupPresentation", "UseableOff" }) do game[name] = function() end end
     game.DeepCopyTable = function(t)
       local copy = {}
       for k, v in pairs(t) do copy[k] = v end
@@ -517,9 +522,30 @@ do
     game.HeroHasTrait = function() return false end
     game.GetTraitUniqueId = function() return "fixture-unique-id" end
     game.LogUpgradeChoice = function() coroutine.yield("stock grant returned") end
-    local ok, marker = coroutine.resume(coroutine.create(game.HandleUpgradeChoiceSelection), screen, button, {})
+
+    -- Use a different actor as the stock triggering user. Only the GUI is
+    -- substituted between HandleLootPickup and the original selection callback.
+    game.ActiveScreens, screen.ChoiceMade = {}, nil
+    game.AreScreensActive = function() return next(game.ActiveScreens) ~= nil end
+    game.HasResourceCost = function(cost) assert(cost == nil); return false end
+    game.ShallowCopyTable = game.DeepCopyTable
+    hero.UntargetableFlags, guest.Traits = {}, {}
+    game.CurrentRun.LootTypeHistory, game.CurrentRun.LootBiomeRecord = {}, {}
+    offer.OnUsedFunctionName = "UseLoot"
+    game.CallFunctionName = function(name, source, useArgs, user)
+      assert(name == "UseLoot" and user == guest)
+      return game.UseLoot(source, useArgs, user)
+    end
+    game.OpenUpgradeChoiceMenu = function(...)
+      local source, menuArgs = ...
+      assert(select("#", ...) == 2 and source == offer and next(menuArgs) == nil)
+      game.ActiveScreens[screen.Name] = screen
+      game.HandleUpgradeChoiceSelection(screen, button, {})
+    end
+    local ok, marker = coroutine.resume(coroutine.create(onUsed), { TriggeredByTable = offer, UserTable = guest })
     assert(ok and marker == "stock grant returned", tostring(marker))
     assert(hero.Traits[1].Name == data.Name and hero.Traits[1].Id == "fixture-unique-id")
+    assert(next(guest.Traits) == nil)
   else
     local result, gap, last = game.AddTraitData(hero, data, args)
     assert(result == hero.Traits[1] and gap == nil and last == "stock return")
