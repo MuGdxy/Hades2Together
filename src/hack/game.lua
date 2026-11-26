@@ -18,6 +18,7 @@ function Game.new(session, hostSeat)
   return setmetatable({
     session = session,
     hostSeat = hostSeat,
+    guestBoonSeed = os.time and os.time() or math.floor(os.clock() * 1000000),
     installed = false,
   }, { __index = Game })
 end
@@ -59,14 +60,21 @@ end
 
 function Game:BindHero(playerId)
   if playerId == self.hostSeat then return self:HeroId() end
+  local unit = self:BoundGuestUnit(playerId)
+  return unit and unit.ObjectId
+end
+
+function Game:BoundGuestUnit(playerId)
+  if playerId == self.hostSeat then return end
   local state = GuestInput.states(self)[playerId]
   if not state or not state.actor then return end
   local run = rom.game.CurrentRun
   if not run or run.CurrentRoom ~= state.room or run.Hero ~= state.hero
       or not rom.game.SessionState or rom.game.SessionState.MapLoads ~= state.load then return end
   local bound = GuestInput.actor(rom.data, playerId)
-  if bound and bound.id == state.id and bound.actor == state.actor and bound.load == state.load then
-    return bound.id
+  if bound and bound.id == state.id and bound.actor == state.actor and bound.load == state.load
+    and state.actor.ObjectId == state.id and state.actor ~= run.Hero then
+    return state.actor
   end
 end
 
@@ -189,7 +197,8 @@ local function readRoom(self, game, room, rewardsOnly)
     if reward then
       load.offers = load.offers or {}
       local offerId = load.offers[reward]
-      if not offerId then
+      local firstObservation = offerId == nil
+      if firstObservation then
         load.offerSerial = (load.offerSerial or 0) + 1
         offerId = load.offerSerial
         load.offers[reward] = offerId
@@ -198,6 +207,7 @@ local function readRoom(self, game, room, rewardsOnly)
         if not load.boonOffer or load.boonOffer.source ~= reward or load.boonOffer.encounter ~= encounter then
           load.boonOffer = { source = reward, objectId = reward.ObjectId, encounter = encounter,
             id = offerId, encounterId = id }
+          if firstObservation then StockBoon.openGuests(self, game, load) end
         end
       end
       visibleReward = { id = offerId, encounterId = id, objectId = reward.ObjectId, kind = reward.Name }

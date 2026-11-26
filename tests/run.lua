@@ -345,6 +345,7 @@ test("rules modules do not touch the game", function()
   local allowed = {
     ["hack/game.lua"] = true,
     ["hack/stock_boon.lua"] = true,
+    ["hack/guest_boon.lua"] = true,
     ["main.lua"] = true,
     ["ready.lua"] = true,
     ["reload.lua"] = true,

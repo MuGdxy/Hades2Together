@@ -1,6 +1,8 @@
 -- Translate the retail single-hero choice and AddTraitData return into
 -- authority data. Menu objects never leave this adapter.
 local Boon = import("gameplay/boon.lua")
+local GuestBoon = import("hack/guest_boon.lua")
+local Session = import("protocol/session.lua")
 local Stock = {}
 
 -- Includes an anchored offer retained from a plugin version that stored
@@ -82,9 +84,62 @@ local function generatedOptions(g, offer)
   return options
 end
 
+local function rollGuest(game, g, load, offer, seat, member, round)
+  local previous = member.rolls[round - 1]
+  member.rolls[round] = GuestBoon.roll(g, g.CurrentRun, offer, member.unit,
+    game.guestBoonSeed or 1, load.id, seat, round, previous)
+  member.round = round
+end
+
+function Stock.openGuests(game, g, load)
+  if not game.session or not Session.isAuthority(game.session) then return end
+  local offer = Stock.current(g, load)
+  if not offer then return end
+  local reward = Stock.reward(load)
+  if reward.guests then return end
+  reward.guests = {}
+  for seat, slot in pairs(game.session.slots) do
+    local unit = game:BoundGuestUnit(seat)
+    if unit then
+      local member = { slot = slot, unit = unit, actorId = unit.ObjectId, rolls = {} }
+      reward.guests[seat] = member
+      rollGuest(game, g, load, offer, seat, member, 1)
+    end
+  end
+end
+
+-- Authority event boundary for an already accepted beneficiary-specific
+-- reroll. Opening the stock screen or replacing the host list never calls it.
+function Stock.onGuestReroll(game, g, load, rewardId, seat, unit, round)
+  if not game.session or not Session.isAuthority(game.session) or not g.CurrentRun
+    or game:LoadedRoom(g.CurrentRun.CurrentRoom) ~= load then return false end
+  local offer = Stock.current(g, load)
+  if not offer or offer.id ~= rewardId then return false end
+  local reward = offer.reward
+  local member = reward and reward.guests and reward.guests[seat]
+  if not member or member.slot ~= game.session.slots[seat] or member.unit ~= unit
+    or unit.ObjectId ~= member.actorId or game:BoundGuestUnit(seat) ~= unit then return false end
+  if member.rolls[round] then return true end
+  local entry = reward.seats and reward.seats[seat]
+  if round ~= member.round + 1 or not member.rolls[member.round].all or (entry and entry.consumed) then return false end
+  Boon.withholdOptions(reward, seat)
+  rollGuest(game, g, load, offer, seat, member, round)
+  return true
+end
+
 function Stock.readOptions(game, g, load)
   local run, offer = g.CurrentRun, Stock.current(g, load)
-  if not offer or not game.session then return end
+  if not offer or not game.session or not Session.isAuthority(game.session) then return end
+  local reward = Stock.reward(load)
+  for seat, member in pairs(reward.guests or {}) do
+    local options = member.rolls[member.round].options
+    if options and member.slot == game.session.slots[seat] and member.unit.ObjectId == member.actorId
+      and game:BoundGuestUnit(seat) == member.unit then
+      Boon.setOptions(game.session, reward, seat, member.actorId, options)
+    else
+      Boon.withholdOptions(reward, seat)
+    end
+  end
   if offer.candidates ~= offer.source.UpgradeOptions then
     if offer.reward then Boon.withholdOptions(offer.reward, game.hostSeat) end
     offer.candidates, offer.locksObserved = offer.source.UpgradeOptions, false

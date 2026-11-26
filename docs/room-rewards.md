@@ -83,11 +83,13 @@ python tests/net_smoke.py --lua lua --stock-room
 - `GetPriorityTraits` 从 `CurrentRun.Hero.Traits` 建立占槽表，用 `HeroHasTrait` 查宿主字典。`IsTraitEligible` 的数量上限检查也向宿主取数。按名称调用 `GetTraitCount(guest, ...)` 会触发仅限当前英雄的调试断言；断言不终止时读到的仍是宿主的层数。见 `UpgradeChoiceLogic.lua:739–778`、`RunLogic.lua:99–129`、`TraitLogic.lua:496–512, 541–557`。
 - `GetHeroTraitValues(key, { Unit = guest })` 能遍历访客，但普通查询的缓存命中和填充都使用宿主的 `HeroTraitValuesCache`。回放中一次访客查询写入宿主缓存，随后宿主查询也返回该值。`HasHeroTraitValue` 则直接遍历宿主，是 `CalcNumLootChoices` 检查限选的来源。见 `TraitLogic.lua:398–428, 1746–1754`。
 
-建议的最小接口是模组适配层的 `resolveOrdinaryBoonOptions(offer, unit)`。输入取该机会的原始掉落配置和已绑定的受益 Unit；占槽、已持有特质、限选、稀有度加成及其缓存均按该 Unit 读取，房间条件和本局禁用列表沿用权威世界。结果按机会、角色和本轮重掷保存，交给现有 `Boon.setOptions`。读取快照只取已裁定的结果。
+模组适配层 `hack/guest_boon.lua` 从当房已确认的普通波塞冬物件读取优先项、武器项和补位池。它根据受益 Unit 的 `Traits`、`TraitDictionary` 和 `BoonData` 处理占槽、已有特质、数量限制、依赖和稀有度加成；本局禁用列表及可识别的世界条件沿用权威游戏。抽到换装分支、遇到未识别的资格条件或需特殊补位时，该轮候选保持未知。当前只投影普通新增特质名。
 
 原版对一个物件写一次 `loot.UpgradeOptions`。优先池裁剪与封锁调用未传 RNG 的 `RemoveRandomValue`，消耗游戏的全局随机序列（`UpgradeChoiceLogic.lua:157–162, 774–779`、`UtilityLogic.lua:1094–1119`）。
 
-**访客抽取策略（待实现）。** 宿主沿用原版结果。权威端为每个访客独立抽取，随机源与原版全局 RNG 隔离。每个房间奖励机会按受益席位保存该轮结果，读取快照、打开菜单和同席重连都复用它。该角色发生有效重掷时才生成其下一轮候选。客户端读取权威结果。上述接口回放仅定位了原版读取宿主数据的边界。
+**访客抽取策略。** 首次确认机会时，权威记录当房已有真实 Unit 绑定的访客及其原名册席。每席的随机序列由权威实例种子、房间、机会、席号和轮次派生。首轮与随后各轮的结果保存在该机会下；`Boon.setOptions` 将当前轮发布到 `room.rewards[].claims[].options`。宿主继续使用原版结果。读快照、宿主重掷或同席重连都沿用访客自己的当前轮；换绑或晚加入无法领取旧机会。
+
+`Stock.onGuestReroll` 是权威内部接收已确认访客重掷的接口，匹配当前房间、机会、席、Unit 及连续轮号，重复通知复用已有结果。本切片尚无访客实际支付重掷或授予效果的事件来源。上面的聚焦回放还加载安装版波塞冬掉落目录，使用夹具的房间禁用列表、原生绑定及确认通知，经 `Game:ReadActors` 核对占槽、限选、断线重连、两席相反的重掷顺序及未知条件。这些证据覆盖权威候选层。
 
 安装版的 `OnUsed` 从 `triggerArgs.UserTable` 取得交互者，将其传给 `UseLoot(usee, args, user)`。正常通过检查后，`UseLoot` 调用 `HandleLootPickup(CurrentRun, usee, args)`，在这里丢失了独立的 `user` 参数。后者调用 `OpenUpgradeChoiceMenu(loot, args)`。见 `InteractLogic.lua:303–343, 621–676, 693–733`。
 
