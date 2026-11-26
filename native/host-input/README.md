@@ -20,8 +20,10 @@ cmake --build ../h2t-input-loader/build --target Hell2Modding
 
 ### 原版 Player 和 handler 槽位
 
-Steam v1.143476 的 `PlayerManager::Instance` 将 Player 向量初始化为两个空指针（`manager+0x18`，RVA `0x5893E/0x5895B`），将 handler 向量初始化为五个空指针（`manager+0x00`，RVA `0x58960/0x58968`）。`Reset` 为未分配控制器的编号 4 准备 handler。`AssignController` 按编号分配 handler，`AddPlayer` 却固定写入 Player 下标 0（RVA `0x1CC9C4`）。第二席由本加载器发布到已有的 Player 下标 1。名册可容纳四席，当前正式加载器只为前两席发布真实角色。
+Steam v1.143476 的 `PlayerManager::Instance` 将 Player 向量初始化为两个空指针（`manager+0x18`，RVA `0x5893E/0x5895B`），将 handler 向量初始化为五个空指针（`manager+0x00`，RVA `0x58960/0x58968`）。原版 `AddPlayer` 在 `0x1CC9C4` 读取 Player 表首地址，在 `0x1CC9C8` 写入下标 0。宿主沿用该 Player。访客按逻辑席号保留自己的原版 Player、Unit 和 handler，分配首个空闲物理通道。会话容量可配置。例如只有 1、5 两名成员时，5 号席可使用通道 1。
 
-`PlayerManager::HandleInput` 按 Player 向量的实际长度遍历，从每个 Player 的分配编号取 handler，再调用原版 `Player::HandleInput`（RVA `0x1CCF10–0x1CCF4D`）。`PlayerManager::Update` 也按该向量的实际长度遍历。三、四席的候选路径是在原线程、任何 owner 缓存槽表地址之前，用引擎自己的向量扩容操作一次建立四个 Player 元素。需先验证其他消费者对玩家编号和表地址的假设，再将发布、回收、各手柄采样和快照按席位复用。当前两席实现尚未验证扩容后的引擎行为。
+物理上限来自该版本的 handler 和 cursor 存储。两者各有五项，`PlayerManager::Reset` 将编号 4 用作未分配控制器，因此本适配器使用通道 0–3。`PlayerManager::HandleInput` 按 Player 向量的实际长度遍历，从每个 Player 的分配编号取 handler，再调用原版 `Player::HandleInput`（RVA `0x1CCF10–0x1CCF4D`）。`PlayerManager::Update` 同样按向量长度遍历。
+
+在隔离并禁用存档的进程中，加载器在 Player 表首次分配时调用引擎自己的向量操作预留可用通道的空间。原版初始化仍创建两个有效元素。加入时按实际需要增加有效长度，保留已有表地址。`rom.data.h2t_guest_capacity()` 返回当前表可承载的物理总数，包含宿主。若错过首次分配，则只使用已有表长；通道占满时，状态显示原生拒绝原因。离线角色继续占用其通道并进入快照。原双席的同房重连和跨房已通过实机，新增物理通道的依据是固定版本源码、原生构建和离线回放。
 
 同源加载器在既有实机记录 `5EqRkTn7If1y` 中取得一席 X 轴 0.8、正向位移 9、显式归零后速度 0，以及原版 Attack2 按下和武器事件。该次记录未捕获攻击释放边沿。后续聚焦测试使用带观测的加载器独立记录了显式零对应的原版释放；本目录只包含提交输入所需的源码。正常入口及回执见[玩家输入](../../docs/input.md)。

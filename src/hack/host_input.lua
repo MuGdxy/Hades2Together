@@ -124,7 +124,11 @@ function Host.update(game, native)
   elseif state.phase == "waiting for stock pad recognition" and trace.outcome == "complete"
       and trace.owner_same and trace.stock_same and trace.direct_neutral
       and trace.sample_neutral and trace.handler_neutral and game:InputAllowed() then
-    state.bound = native.h2t_active_bind(state.id, state.load)
+    if native.h2t_guest_capacity then
+      state.bound = native.h2t_active_bind(state.id, state.load, game.hostSeat)
+    else
+      state.bound = native.h2t_active_bind(state.id, state.load)
+    end
     if not state.bound or not syncConnection(state, state.slot) then
       Host.revoke(game, "native host bind or connect refused")
       return

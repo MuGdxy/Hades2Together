@@ -105,7 +105,9 @@ inline std::optional<Owner> stock_owner(int id) noexcept {
     const auto slots = h2t_players::Slots::current();
     if (!slots) return {};
     const auto owner = slots->primary(id);
-    if (!owner || !h2t_players::secondary.accepts(*slots, *owner)) return {};
+    if (!owner) return {};
+    for (unsigned lane=1;lane<slots->size();++lane)
+        if (!h2t_players::reservation(lane).accepts(*slots,*owner)) return {};
     return owner;
 }
 struct PadVector { Addr begin{}; unsigned count{}; };
@@ -130,11 +132,12 @@ inline int adapter_id{-1}, hero_id{};
 inline std::uint64_t arm_serial{};
 inline bool attempted{};
 
-inline Controller* guest_pad{};
-inline Joystick* guest_joystick{};
-inline int guest_pad_id{-1};
+struct Device { Controller* pad{}; Joystick* joystick{}; int id{-1}; };
+inline std::array<Device,playable_lanes> guest_devices{};
 inline bool attaching_guest{};
-
+inline Device device(unsigned lane) {
+    return lane ? guest_devices[lane] : Device{adapter_pad,adapter_joystick,adapter_id};
+}
 inline bool neutral_device(int lane, Controller* pad, Joystick* joystick, int id) noexcept {
     if (!pad || !joystick || id<0 || !sdl.attached(pad) || sdl.device_id(lane)!=id ||
         !sdl.virtual_device(lane) || sdl.joystick(pad)!=joystick || sdl.id(joystick)!=id) return false;
@@ -143,42 +146,57 @@ inline bool neutral_device(int lane, Controller* pad, Joystick* joystick, int id
     return true;
 }
 inline bool sdl_neutral() noexcept {
-    return adapter_pad && sdl.count()==(guest_pad ? 2 : 1) &&
-        neutral_device(0,adapter_pad,adapter_joystick,adapter_id) &&
-        (!guest_pad || (guest_pad!=adapter_pad && guest_pad_id!=adapter_id &&
-                        neutral_device(1,guest_pad,guest_joystick,guest_pad_id)));
+    if (!adapter_pad) return false;
+    const int count=sdl.count();
+    if (count<=0 || unsigned(count)>playable_lanes) return false;
+    for (unsigned i=0;i<playable_lanes;++i) {
+        const auto d=device(i);
+        if (i >= unsigned(count)) { if (d.pad) return false; continue; }
+        if (!neutral_device(i,d.pad,d.joystick,d.id)) return false;
+        for (unsigned j=0;j<i;++j) {
+            const auto other=device(j);
+            if (d.id==other.id || d.pad==other.pad || d.joystick==other.joystick) return false;
+        }
+    }
+    return true;
 }
-inline bool add_guest_pad() noexcept {
-    if (guest_pad) return sdl_neutral();
-    if (attaching_guest || !sdl_neutral()) return false;
+inline bool add_guest_pad(unsigned lane) noexcept {
+    if (!lane || lane>=playable_lanes || !sdl_neutral()) return false;
+    if (device(lane).pad) return true;
+    const int next=sdl.count();
+    if (attaching_guest || next<=0 || next>int(lane)) return false;
     attaching_guest=true;
-    constexpr Descriptor desc{1,1,6,21,1,0x045e,0x028e,0,0x1fffff,0x3f,"H2T Seat 2"};
+    struct FinishAttach { ~FinishAttach(){ attaching_guest=false; } } finish;
+    constexpr Descriptor desc{1,1,6,21,1,0x045e,0x028e,0,0x1fffff,0x3f,"H2T Guest Pad"};
     const int index=sdl.attach(&desc);
-    if (index!=1) return false;
+    if (index<0) return false;
     const auto id=sdl.device_id(index);
-    auto pad=sdl.open(index);
+    auto pad=index==next ? sdl.open(index) : nullptr;
     auto joystick=pad ? sdl.joystick(pad) : nullptr;
-    if (!neutral_device(index,pad,joystick,id) || pad==adapter_pad || id==adapter_id) {
-        // Still inside the attach call's game update. The stock sampler has
-        // never received this device. Balance only our own open and attachment.
+    bool unique=true;
+    for (int i=0; i<next; ++i) {
+        const auto other=device(i);
+        if (other.id==id || other.pad==pad || other.joystick==joystick) unique=false;
+    }
+    if (!unique || !neutral_device(index,pad,joystick,id)) {
         if (pad) sdl.close(pad);
-        if (id>=0 && id!=adapter_id && sdl.device_id(index)==id && sdl.virtual_device(index))
-            sdl.detach(index);
+        if (id>=0 && sdl.device_id(index)==id && sdl.virtual_device(index)) sdl.detach(index);
         return false;
     }
-    guest_pad=pad;
-    guest_joystick=joystick;
-    guest_pad_id=id;
-    return true;
+    guest_devices[index]={pad,joystick,id};
+    return index==int(lane);
 }
 inline bool verified_pad(Addr obj, Controller* pad, int id) noexcept {
     return obj && pad && id>=0 && read<int>(obj+0x50)==id && read<unsigned>(obj+0x38)==2u &&
         read<Addr>(obj+0x48)==reinterpret_cast<Addr>(pad);
 }
 inline bool managed_topology(const PadVector& vec) noexcept {
-    return sdl_neutral() && (vec.count==1 || (vec.count==2 && guest_pad &&
-        verified_pad(read<Addr>(vec.begin+8).value_or(0),guest_pad,guest_pad_id))) &&
-        verified_pad(read<Addr>(vec.begin).value_or(0),adapter_pad,adapter_id);
+    if (!vec.count || vec.count>playable_lanes || !sdl_neutral()) return false;
+    for (unsigned i=0;i<vec.count;++i) {
+        const auto d=device(i);
+        if (!verified_pad(read<Addr>(vec.begin+i*sizeof(Addr)).value_or(0),d.pad,d.id)) return false;
+    }
+    return true;
 }
 inline const char* arm(int hero) noexcept {
     const auto trace=latest_on_game_thread();
@@ -214,7 +232,7 @@ inline Check observe(int hero) noexcept {
     if (!out.trace.serial || !before || hero!=hero_id || out.trace.serial<=arm_serial) return out;
     const auto own=stock_owner(hero);
     out.owner_same=own && *own==*before;
-    if (!out.owner_same || out.trace.outcome!=Outcome::complete || (out.trace.count!=1 && out.trace.count!=2)) return out;
+    if (!out.owner_same || out.trace.outcome!=Outcome::complete || (!out.trace.count || out.trace.count>playable_lanes)) return out;
     const auto& lane=out.trace.lanes[0];
     out.instance=lane.pad.instance;
     const auto vec=stock_vector();

@@ -5,6 +5,8 @@
 #include <cstdint>
 
 namespace h2t_observe {
+// Retail controller number 4 is the parked handler. Only lower indices accept player input.
+constexpr unsigned playable_lanes = 4;
 using Addr = std::uintptr_t;
 constexpr Addr update_return = 0x63596;
 constexpr Addr reset_return = 0x6358a;
@@ -29,7 +31,7 @@ enum class Outcome { none, complete, zero_pads, reset, incomplete };
 struct Trace {
     std::uint64_t serial{};
     unsigned count{};
-    std::array<Lane,2> lanes{};
+    std::array<Lane,playable_lanes> lanes{};
     Outcome outcome{Outcome::none};
 };
 
@@ -38,7 +40,7 @@ class Recorder {
     bool opened_{}, topology_{}, fault_{}, reset_{};
     int lane_{-1};
     Trace pending_{}, latest_{};
-    std::array<Addr,2> expected_pads_{};
+    std::array<Addr,playable_lanes> expected_pads_{};
     bool on_thread(unsigned thread) const noexcept { return thread && thread == thread_.load(); }
     bool complete(const Lane& lane) const noexcept {
         return lane.reads == 20u + (lane.pad.model <= 1 ? 1u : 0u)
@@ -69,7 +71,7 @@ public:
         clear();
         reset_ = true;
     }
-    bool begin_topology(unsigned thread, Addr caller, unsigned pad_count, std::array<Addr,2> objects) noexcept {
+    bool begin_topology(unsigned thread, Addr caller, unsigned pad_count, std::array<Addr,playable_lanes> objects) noexcept {
         if (!on_thread(thread) || !opened_ || caller != update_return) return false;
         if (topology_ || pad_count > pending_.lanes.size()) {
             fault_ = true;
@@ -88,8 +90,8 @@ public:
             return;
         }
         if (lane_ >= 0 && !complete(pending_.lanes[lane_])) fault_ = true;
-        if (lane_ >= 0) {
-            const auto& previous = pending_.lanes[lane_].pad;
+        for (unsigned previous_lane=0; previous_lane<index; ++previous_lane) {
+            const auto& previous = pending_.lanes[previous_lane].pad;
             if (previous.object == value.object || previous.controller == value.controller
                 || previous.instance == value.instance) fault_ = true;
         }

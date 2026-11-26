@@ -134,7 +134,7 @@ do
   Session.release(session, 2)
   controller:Step(0, 1)
   update()
-  assert(controller:BindHero(2) == 900 and controller.guestInput.sequence == nil and not send())
+  assert(controller:BindHero(2) == 900 and controller.guestInputs[2].sequence == nil and not send())
   Session.join(session, "guest")
   assert(not send())
   clear = true
@@ -205,7 +205,7 @@ do
   game.CurrentRun.CurrentRoom = { Name=oldRoom.Name }
   assert(not controller:BindHero(2) and not controller:ReadActors().heroes[2])
   controller:UpdateInputOwner()
-  assert(oldHost.revokePending and controller.guestInput.reason == "retiring")
+  assert(oldHost.revokePending and controller.guestInputs[2].reason == "retiring")
   closed = true
   controller:UpdateInputOwner()
   assert(controller.hostInput == oldHost and not oldHost.revokePending)
@@ -216,7 +216,7 @@ do
   assert(controller.hostInput == oldHost and not published)
   reclaimed, actor = true, nil
   controller:UpdateInputOwner()
-  assert(controller.guestInput == nil)
+  assert(controller.guestInputs[2] == nil)
   game.SessionMapState.DeferredObstacleInitializationFinished = true
   controller:UpdateInputOwner()
   controller:UpdateInputOwner()
@@ -225,7 +225,7 @@ do
   assert(controller:ReadActors().heroes[2].hp == 30)
   assert(controller:BodyReport():find("load=8 publication=13", 1, true))
   assert(session.slots[2] == slot and not slot.connected and slot.connectionGeneration == generation)
-  assert(controller.guestInput.reason == "offline" and not send())
+  assert(controller.guestInputs[2].reason == "offline" and not send())
   native.h2t_guest_connection = function(load, pub, token, online)
     assert(load == 8 and pub == 13 and token == generation + 1 and online)
     return true
@@ -241,6 +241,49 @@ do
   clear = true
   update()
   assert(send())
+  -- The same guest ABI routes a sparse logical ID independently of the other
+  -- published guest. The model supplies stock observations, not a game run.
+  session.maxPlayers = 5
+  assert(Session.join(session, "Fifth", 5) == 5)
+  native.h2t_guest_capacity = function() return 4 end
+  local fifth
+  game.AttachLua = function(args)
+    assert(args.Id == 905)
+    fifth = args.Table
+    fifth.Health, fifth.MaxHealth = 24, 30
+  end
+  names[905], alive[905] = "_PlayerUnit", true
+  native.h2t_guest_actor = function(seat)
+    if seat == 5 and not fifth then return { load=8, id=905, empty=true } end
+    local body = seat == 5 and fifth or actor
+    return { load=8, id=body.ObjectId, actor=body }
+  end
+  native.h2t_guest_owner = function(_, load, _, retain, _, seat)
+    assert(retain and load==8)
+    return {id=seat==5 and 905 or 900, epoch=8, publication=seat==5 and 14 or 13, inputBound=true}
+  end
+  native.h2t_guest_connection = function(_, pub, token, online, seat)
+    assert(seat==5 and pub==14 and token==1 and online)
+    return true
+  end
+  native.h2t_guest_clear = function(pub, token, seat) return pub==14 and token==1 and seat==5 end
+  local samples = {}
+  native.h2t_guest_submit = function(load, pub, token, seq, x, _, _, _, _, seat)
+    assert(load==8 and pub==14 and token==1 and seat==5 and seq==#samples+1)
+    samples[seq] = x
+    return true
+  end
+  local script = environment.import("dev/inputs.lua").parse("5 0.5 0 0.001", Session.capacity(session))
+  controller:BeginPlayback(script)
+  controller:Step(0.05, 1)
+  assert(controller.playing and controller.playTime==0 and #samples==0)
+  update()
+  controller:Step(0.05, 2)
+  assert(controller:BindHero(5)==905 and samples[1]==0.5 and controller.playStarted and controller.playTime==0)
+  controller:Step(0.05, 3)
+  assert(not controller.playing and samples[2]==0)
+  assert(controller:BindHero(2)==900 and controller:ReadActors().heroes[3].id==905)
+  names[905], alive[905] = nil,nil
   game.CurrentRun.CurrentRoom = oldRoom
   names[900], alive[900] = nil, nil
   environment.rom.data, game.SessionState, game.SessionMapState = nil, nil, nil

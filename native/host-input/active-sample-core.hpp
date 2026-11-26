@@ -1,4 +1,5 @@
 #pragma once
+#include "observe-sampler-core.hpp"
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -22,10 +23,12 @@ struct Owner {
 struct Proof {
     Owner owner{};
     unsigned pad_count{};
-    bool attached_virtual_neutral{}, mapping{}, managed_pair{};
+    bool attached_virtual_neutral{}, mapping{}, managed_lanes{};
     bool valid() const noexcept {
         const auto& p = owner;
-        return ((pad_count==1 && p.player_slot==0) || (pad_count==2 && managed_pair && p.player_slot<2)) && attached_virtual_neutral && mapping && p.world && p.player && p.unit &&
+        const bool routed = pad_count>0 && pad_count<=h2t_observe::playable_lanes &&
+            p.player_slot<pad_count && (pad_count==1 || managed_lanes);
+        return routed && attached_virtual_neutral && mapping && p.world && p.player && p.unit &&
             p.handler && p.stock_pad && p.sdl_pad && p.joystick && p.hero>0 && p.instance>=0 &&
             p.handler_index==p.player_slot && p.input_lane==p.player_slot && p.model==2 && p.room_epoch;
     }

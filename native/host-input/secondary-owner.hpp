@@ -6,6 +6,8 @@ namespace h2t_players {
 // One allocation per reserved seat in this World. Connection changes never reach
 // the factory. Unit destruction belongs to the original World/UnitManager.
 class RoomGuest {
+    unsigned lane_;
+    std::uint64_t seat_{};
     PrivatePlayer player_;
     GuestDescriptor descriptor_;
     Slots tables_{};
@@ -17,7 +19,8 @@ class RoomGuest {
     bool constructing_unit_{}, selected_{}, registered_{}, closing_{}, delete_requested_{}, removed_{};
     bool busy_{}, remove_returned_{};
     const char* reason_{"empty"};
-    std::array<SafetyHookMid,7> taps_;
+    inline static std::array<SafetyHookMid,7> taps_;
+    inline static std::uint64_t next_publication_{};
     struct Pending {
         Slots slots; Owner host; int id, point; std::uint64_t epoch, connection;
         bool operator==(const Pending&) const = default;
@@ -40,7 +43,7 @@ class RoomGuest {
     }
     bool detach() noexcept {
         if (!registered_) return true;
-        if (!secondary.unpublish(publication_)) { reason_ = "slot detach pending"; return false; }
+        if (!reservation(lane_).unpublish(publication_)) { reason_ = "slot detach pending"; return false; }
         registered_ = false;
         return true;
     }
@@ -84,57 +87,57 @@ class RoomGuest {
         }
         reclaim();
     }
-    static RoomGuest& self();
-    static void generated(SafetyHookContext& f) noexcept {
-        auto& s = self();
-        if (!s.on_thread() || !s.constructing_unit_ || f.rdi != s.descriptor_.address()) return;
+
+    void generated(SafetyHookContext& f) noexcept {
+        if (!on_thread() || !constructing_unit_ || f.rdi != descriptor_.address()) return;
         const auto id = read<int>(f.rsi + 0x48).value_or(-1);
-        if (s.generated_ || read<Addr>(f.rsi) != game_base + 0x4ef178 ||
-            read<Addr>(f.rsi + 0x520) != f.rdi || id <= 0 || id != int64_t{s.counter_} + 1 ||
-            read<int>(s.tables_.world + 0x14) != id || read<int>(f.rdi + 0x10) != -1 ||
-            world_object(s.tables_.world,id) || unit_object(id) || !s.inactive_vacant(id)) {
-            s.reason_ = "stock generated identity changed"; return;
+        if (generated_ || read<Addr>(f.rsi) != game_base + 0x4ef178 ||
+            read<Addr>(f.rsi + 0x520) != f.rdi || id <= 0 || id != int64_t{counter_} + 1 ||
+            read<int>(tables_.world + 0x14) != id || read<int>(f.rdi + 0x10) != -1 ||
+            world_object(tables_.world,id) || unit_object(id) || !inactive_vacant(id)) {
+            reason_ = "stock generated identity changed"; return;
         }
         *reinterpret_cast<int*>(f.rdi + 0x10) = id;
-        s.id_ = id;
-        s.generated_ = f.rsi;
+        id_ = id;
+        generated_ = f.rsi;
     }
-    static void select_player(SafetyHookContext& f) noexcept {
-        auto& s = self();
-        if (!s.on_thread() || !s.constructing_unit_ || read<Addr>(f.r14 + 0x520) != s.descriptor_.address()) return;
+    void select_player(SafetyHookContext& f) noexcept {
+        if (!on_thread() || !constructing_unit_ || read<Addr>(f.r14 + 0x520) != descriptor_.address()) return;
         // The original instruction loads [rax] into the new Unit's Player borrow.
         // The private descriptor alone identifies this factory call, including rollback.
-        if (read<Addr>(f.r14) != game_base + 0x4ef178 || f.rax != s.tables_.players ||
-            s.selected_ || s.chosen_ != s.player_.address()) { s.reason_ = "stock player selector changed"; return; }
-        f.rax = reinterpret_cast<Addr>(&s.chosen_);
-        s.selected_ = true;
+        if (read<Addr>(f.r14) != game_base + 0x4ef178 || f.rax != tables_.players ||
+            selected_ || chosen_ != player_.address()) { reason_ = "stock player selector changed"; return; }
+        f.rax = reinterpret_cast<Addr>(&chosen_);
+        selected_ = true;
     }
-    static void removing(SafetyHookContext& f) noexcept {
-        auto& s = self();
-        if (!s.on_thread() || !s.unit_ || f.rcx != s.unit_ || s.removed_) return;
+    void removing(SafetyHookContext& f) noexcept {
+        if (!on_thread() || !unit_ || f.rcx != unit_ || removed_) return;
         const auto caller = read<Addr>(f.rsp).value_or(0);
-        s.retire(true);
-        if (s.registered_ || (caller != game_base + 0x2b1dc8 && caller != game_base + 0x2b2a5d) ||
-            read<Addr>(s.unit_ + 0x520) != s.descriptor_.address() || read<int>(s.unit_ + 0x48) != s.id_) return;
-        s.remove_stack_ = f.rsp;
-        s.remove_return_ = caller;
+        retire(true);
+        if (registered_ || (caller != game_base + 0x2b1dc8 && caller != game_base + 0x2b2a5d) ||
+            read<Addr>(unit_ + 0x520) != descriptor_.address() || read<int>(unit_ + 0x48) != id_) return;
+        remove_stack_ = f.rsp;
+        remove_return_ = caller;
     }
-    static void returned(SafetyHookContext& f, Addr rva) noexcept {
-        auto& s = self();
-        if (!s.on_thread() || !s.remove_stack_ || s.remove_stack_ + sizeof(Addr) != f.rsp ||
-            s.remove_return_ != game_base + rva) return;
-        s.remove_stack_ = 0;
-        s.remove_returned_ = true;
-        s.reason_ = "awaiting vacant original lookups";
-        s.reclaim();
+    void returned(SafetyHookContext& f, Addr rva) noexcept {
+        if (!on_thread() || !remove_stack_ || remove_stack_ + sizeof(Addr) != f.rsp ||
+            remove_return_ != game_base + rva) return;
+        remove_stack_ = 0;
+        remove_returned_ = true;
+        reason_ = "awaiting vacant original lookups";
+        reclaim();
     }
-    static void reset(SafetyHookContext& f) noexcept {
-        auto& s = self();
-        if (s.on_thread() && f.rcx == s.tables_.world) s.retire(true);
+    void reset(SafetyHookContext& f) noexcept {
+        if (on_thread() && f.rcx == tables_.world) retire(true);
     }
-    static void shutdown(SafetyHookContext& f) noexcept {
-        auto& s = self();
-        if (s.on_thread() && f.rcx == s.tables_.manager) s.retire(true);
+    void shutdown(SafetyHookContext& f) noexcept {
+        if (on_thread() && f.rcx == tables_.manager) retire(true);
+    }
+    template<auto Method, Addr... Site>
+    static void dispatch(SafetyHookContext& frame) noexcept {
+        for (auto& room : rooms()) {
+            if (room) ((*room).*Method)(frame, Site...);
+        }
     }
     bool install() {
         if (taps_[0]) return true;
@@ -154,10 +157,14 @@ class RoomGuest {
         using Fn = safetyhook::MidHookFn;
         struct Site { Addr rva; Fn callback; };
         const std::array<Site,7> sites{{
-            {0x2ac75b,generated},{0x2a84dc,select_player},{0x2b25b0,removing},
-            {0x2b1dc8,[](SafetyHookContext& f){returned(f,0x2b1dc8);}},
-            {0x2b2a5d,[](SafetyHookContext& f){returned(f,0x2b2a5d);}},
-            {0x2cb420,reset},{0x1cd020,shutdown}}};
+            {0x2ac75b, dispatch<&RoomGuest::generated>},
+            {0x2a84dc, dispatch<&RoomGuest::select_player>},
+            {0x2b25b0, dispatch<&RoomGuest::removing>},
+            {0x2b1dc8, dispatch<&RoomGuest::returned,0x2b1dc8>},
+            {0x2b2a5d, dispatch<&RoomGuest::returned,0x2b2a5d>},
+            {0x2cb420, dispatch<&RoomGuest::reset>},
+            {0x1cd020, dispatch<&RoomGuest::shutdown>},
+        }};
         std::array<SafetyHookMid,7> taps;
         for (size_t i=0; i<sites.size(); ++i) {
             taps[i] = safetyhook::create_mid(game_base+sites[i].rva, sites[i].callback);
@@ -168,13 +175,18 @@ class RoomGuest {
     }
 
 public:
+    static std::span<std::optional<RoomGuest>> rooms();
+    explicit RoomGuest(unsigned lane, std::uint64_t seat): lane_(lane), seat_(seat) {}
+    std::uint64_t seat() const noexcept { return seat_; }
+    unsigned lane() const noexcept { return lane_; }
+    bool reusable() const noexcept { return !thread_ && !pending_ && !busy_; }
     bool published() const noexcept {
-        return on_thread() && !closing_ && registered_ && host_matches() && secondary.accepts(tables_,primary_) &&
+        return on_thread() && !closing_ && registered_ && host_matches() && reservation(lane_).accepts(tables_,primary_) &&
             world_object(tables_.world,id_)==unit_ && unit_object(id_)==unit_;
     }
     std::optional<Owner> owner() const noexcept {
         if (!published()) return {};
-        return Owner{tables_.world, player_.address(), unit_, read<Addr>(tables_.handlers+8).value_or(0)};
+        return Owner{tables_.world, player_.address(), unit_, read<Addr>(tables_.handlers+lane_*sizeof(Addr)).value_or(0)};
     }
     int id() const noexcept { return published() ? id_ : 0; }
     std::uint64_t epoch() const noexcept { return epoch_; }
@@ -202,8 +214,9 @@ public:
         pending_.reset();
         if (!active_epoch || active_epoch!=request.epoch || Slots::current()!=request.slots ||
             request.slots.primary(request.id)!=request.host) { reason_="room changed before creation"; return; }
+        if (!request.slots.ensure(lane_)) { reason_="stock Player capacity unavailable"; return; }
         join(request.id,request.epoch,request.point);
-        if (!registered_) refused_=request;
+        if (!registered_ && std::string_view(reason_)!="stock spawn point blocked") refused_=request;
         else refused_.reset();
     }
     void maintain() noexcept {
@@ -216,8 +229,8 @@ public:
             read<std::uint8_t>(game_base+0x837ebb)!=0) { reason_="room or fixed pads unavailable"; return; }
         const auto slots = Slots::current();
         const auto host = slots ? slots->primary(hero) : std::nullopt;
-        if (!host || read<Addr>(host->unit+0x658)!=host->player ||
-            read<Addr>(slots->players+8)!=Addr{0} || !install()) { reason_="stock host or vacant slot unavailable"; return; }
+        if (!host || lane_>=slots->size() || read<Addr>(host->unit+0x658)!=host->player ||
+            read<Addr>(slots->players+lane_*sizeof(Addr))!=Addr{0} || !install()) { reason_="stock host or vacant slot unavailable"; return; }
         const Addr point = world_object(slots->world, point_id);
         const auto loc = reinterpret_cast<Location* (*)(Addr,Location*)>(game_base+0x29ed10);
         Location xy{};
@@ -248,13 +261,13 @@ public:
             if (!unit_ || !selected_ || generated_ != unit_ || read<Addr>(unit_+0x658)!=chosen_ ||
                 world_object(tables_.world,id_)!=unit_ || unit_object(id_)!=unit_ || !host_matches() || closing_)
                 return "original Unit creation incomplete";
-            const auto handler = read<Addr>(tables_.handlers+8);
-            const auto cursor = read<Addr>(game_base+0x831918);
+            const auto handler = read<Addr>(tables_.handlers+lane_*sizeof(Addr));
+            const auto cursor = read<Addr>(game_base+0x831910+lane_*sizeof(Addr));
             if (!handler || !cursor || (*handler ? *cursor!=*handler+0x20 : *cursor!=0))
                 return "secondary controller slot occupied";
-            reinterpret_cast<void (*)(Addr,Addr,std::uint8_t)>(game_base+0x1cc9e0)(tables_.manager,chosen_,1);
-            Owner guest{tables_.world,chosen_,unit_,read<Addr>(tables_.handlers+8).value_or(0)};
-            const auto result=secondary.publish(++publication_,hero,*host,id_,guest);
+            reinterpret_cast<void (*)(Addr,Addr,std::uint8_t)>(game_base+0x1cc9e0)(tables_.manager,chosen_,static_cast<std::uint8_t>(lane_));
+            Owner guest{tables_.world,chosen_,unit_,read<Addr>(tables_.handlers+lane_*sizeof(Addr)).value_or(0)};
+            const auto result=reservation(lane_).publish(publication_=++next_publication_,hero,*host,id_,guest);
             registered_=result!=SecondarySlot::Publication::refused;
             return result==SecondarySlot::Publication::published ? nullptr : "secondary publication refused";
         };
@@ -264,6 +277,20 @@ public:
         else reason_ = "ready";
     }
 };
-inline RoomGuest room_guest;
-inline RoomGuest& RoomGuest::self() { return room_guest; }
+inline std::span<std::optional<RoomGuest>> RoomGuest::rooms() {
+    static std::array<std::optional<RoomGuest>,playable_lanes> entries;
+    return entries;
+}
+inline RoomGuest* guest_for(std::uint64_t seat) {
+    for (auto& room:RoomGuest::rooms()) if (room && room->seat()==seat) return &*room;
+    return nullptr;
+}
+inline RoomGuest* claim_guest(std::uint64_t seat, unsigned capacity) {
+    if (auto* guest=guest_for(seat)) return guest;
+    auto rooms=RoomGuest::rooms();
+    for (unsigned lane=1; lane<capacity && lane<rooms.size(); ++lane) {
+        if (!rooms[lane]) return &rooms[lane].emplace(lane,seat);
+    }
+    return nullptr;
+}
 }

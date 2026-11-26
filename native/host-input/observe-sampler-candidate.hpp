@@ -58,10 +58,10 @@ inline void at_topology(SafetyHookContext& context) noexcept {
     if (!armed.load(std::memory_order_acquire)) return;
     const auto first = read<Addr>(context.rsi + 0x20);
     const auto last = read<Addr>(context.rsi + 0x28);
-    unsigned count = 3; // unreadable, misaligned, or above fixture limit
+    unsigned count = playable_lanes + 1; // unreadable, misaligned, or outside the playable controller range
     if (first && last && *last >= *first && (*last-*first) % sizeof(Addr) == 0
-        && (*last-*first) / sizeof(Addr) <= 2) count = unsigned((*last-*first) / sizeof(Addr));
-    std::array<Addr,2> objects{};
+        && (*last-*first) / sizeof(Addr) <= playable_lanes) count = unsigned((*last-*first) / sizeof(Addr));
+    std::array<Addr,playable_lanes> objects{};
     if (count <= objects.size()) {
         for (unsigned i = 0; i < count; ++i) objects[i] = read<Addr>(*first+i*sizeof(Addr)).value_or(0);
     }

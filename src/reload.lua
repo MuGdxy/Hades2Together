@@ -111,7 +111,7 @@ local function prepare()
   local session = candidate.Session.new(config.role, config.maxPlayers)
   local slot = candidate.Session.join(session, config.playerName or "Player")
   local newControl = candidate.Menu.new(session)
-  local newGame = candidate.Game.new(session)
+  local newGame = candidate.Game.new(session, slot)
   return candidate, newControl, newGame, slot
 end
 

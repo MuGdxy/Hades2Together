@@ -9,11 +9,12 @@ local Inputs = import("dev/inputs.lua")
 local Messages = import("protocol/messages.lua")
 local Session = import("protocol/session.lua")
 
-local Game = {}
+local Game = { hostSeat = 1 } -- Default for instances retained across plugin reload.
 
-function Game.new(session)
+function Game.new(session, hostSeat)
   return setmetatable({
     session = session,
+    hostSeat = hostSeat,
     installed = false,
   }, { __index = Game })
 end
@@ -54,16 +55,15 @@ function Game:HeroId()
 end
 
 function Game:BindHero(playerId)
-  if playerId == 1 then
-    return self:HeroId()
-  elseif playerId == 2 and self.guestInput and self.guestInput.actor and rom.data and rom.data.h2t_guest_actor then
-    local run = rom.game.CurrentRun
-    if not run or run.CurrentRoom ~= self.guestInput.room or run.Hero ~= self.guestInput.hero
-        or not rom.game.SessionState or rom.game.SessionState.MapLoads ~= self.guestInput.load then return end
-    local bound = rom.data.h2t_guest_actor()
-    if bound.id == self.guestInput.id and bound.actor == self.guestInput.actor and bound.load == self.guestInput.load then
-      return bound.id
-    end
+  if playerId == self.hostSeat then return self:HeroId() end
+  local state = GuestInput.states(self)[playerId]
+  if not state or not state.actor then return end
+  local run = rom.game.CurrentRun
+  if not run or run.CurrentRoom ~= state.room or run.Hero ~= state.hero
+      or not rom.game.SessionState or rom.game.SessionState.MapLoads ~= state.load then return end
+  local bound = GuestInput.actor(rom.data, playerId)
+  if bound and bound.id == state.id and bound.actor == state.actor and bound.load == state.load then
+    return bound.id
   end
 end
 
@@ -239,13 +239,25 @@ function Game:ReadActors()
   end
 
   local native = rom.data
-  if native and native.h2t_guest_actor and (not self.guestInput or
-      (self.guestInput.room == run.CurrentRoom and self.guestInput.hero == run.Hero)) then
-    local guest = native.h2t_guest_actor()
-    if guest.actor and guest.actor.ObjectId == guest.id and game.SessionState
-        and guest.load == game.SessionState.MapLoads then
-      local actor = readActor(self, guest.actor)
-      if actor then actors.heroes[#actors.heroes + 1] = actor end
+  local states = GuestInput.states(self)
+  local seats
+  if self.session then
+    seats = GuestInput.seats(self.hostSeat, self.session.slots)
+  elseif native and native.h2t_guest_seats then
+    seats = native.h2t_guest_seats()
+    table.sort(seats)
+  else
+    seats = { 2 } -- The legacy observer DLL can publish a single guest.
+  end
+  for _, seat in ipairs(seats) do
+    local state = states[seat]
+    if not state or (state.room == run.CurrentRoom and state.hero == run.Hero) then
+      local guest = GuestInput.actor(native, seat)
+      if guest and guest.actor and guest.actor.ObjectId == guest.id and game.SessionState
+          and guest.load == game.SessionState.MapLoads then
+        local actor = readActor(self, guest.actor)
+        if actor then actors.heroes[#actors.heroes + 1] = actor end
+      end
     end
   end
 
@@ -295,14 +307,14 @@ function Game:ReadLocalInput()
 end
 
 function Game:PushInput(playerId, frame)
-  local guest = playerId == 2 and rom and rom.data and rom.data.h2t_guest_submit
-  if playerId ~= 1 and not guest then
+  local guest = playerId ~= self.hostSeat and rom and GuestInput.supports(rom.data, playerId)
+  if playerId ~= self.hostSeat and not guest then
     return false, "seat " .. tostring(playerId) .. " has no native player input slot"
   end
   if not rom or not rom.data or not rom.data.h2t_active_submit then
     return false, "the retail Lua API cannot submit native player movement"
   end
-  if not Messages.validInput(frame, Session.MAX_PLAYERS) or frame.playerId ~= playerId then
+  if not self.session or not Messages.validInput(frame, Session.capacity(self.session)) or frame.playerId ~= playerId then
     return false, "invalid input frame for host seat"
   end
   if guest then return GuestInput.submit(self, frame) end
@@ -315,7 +327,7 @@ function Game:InputOwner()
   local run = g.CurrentRun
   local hero, room = run and run.Hero, run and run.CurrentRoom
   local load = g.SessionState and g.SessionState.MapLoads
-  local slot = self.session.slots[1]
+  local slot = self.session.slots[self.hostSeat]
   if slot and room and not room.Leaving and hero
       and type(hero.ObjectId) == "number" and hero.ObjectId > 0
       and stockId(load) then
@@ -332,14 +344,22 @@ end
 function Game:GuestSpawnPoint(hero)
   local g = rom.game
   local id = g.GetClosest({ Id = hero, DestinationName = "SpawnPoints", RequiredLocationUnblocked = true })
-  if type(id) == "number" and id > 0 and id ~= hero and g.IdExists({ Id = id })
-      and g.IsLocationBlocked({ Id = id, CheckUnits = true }) == false then return id end
+  local function usable(point)
+    return type(point) == "number" and point > 0 and point ~= hero and g.IdExists({Id=point})
+      and g.IsLocationBlocked({Id=point, CheckUnits=true}) == false
+  end
+  if usable(id) then return id end
+  -- A stationary retained actor can occupy the original nearest authored point.
+  local points = g.GetIds and g.GetIds({ Name = "SpawnPoints" })
+  for _, point in ipairs(points or {}) do
+    if point ~= id and usable(point) then return point end
+  end
 end
 
 -- The original Thing destructor releases its attached Lua registry reference.
 -- CreateNewHero's explicit weapon argument initializes this table locally.
 function Game:EnsureGuestActor(state)
-  local binding = state.native.h2t_guest_actor()
+  local binding = GuestInput.actor(state.native, state.seatId)
   if binding.id ~= state.id or binding.load ~= state.load then return false end
   if binding.empty and not state.attachAttempted then
     local g = rom.game
@@ -349,7 +369,7 @@ function Game:EnsureGuestActor(state)
     if type(actor) ~= "table" or actor.ObjectId ~= nil or actor == state.hero then return false end
     actor.ObjectId = state.id
     g.AttachLua({ Id = state.id, Table = actor })
-    binding = state.native.h2t_guest_actor()
+    binding = GuestInput.actor(state.native, state.seatId)
     if binding.actor ~= actor then return false end
     state.actor = actor
   end
@@ -369,7 +389,7 @@ function Game:SubmitInput(tick, playerId, state)
   self.inputSequences = self.inputSequences or {}
   local seq = (self.inputSequences[playerId] or 0) + 1
   local frame = Input.frame(tick, playerId, state, seq)
-  if not Messages.validInput(frame, Session.MAX_PLAYERS) then
+  if not Messages.validInput(frame, Session.capacity(self.session)) then
     return false, "invalid sample"
   end
   self.inputSequences[playerId] = seq
@@ -459,8 +479,27 @@ function Game:Enter(mapName, now)
   return true
 end
 
+local function playbackSeats(session, script)
+  local seats = {}
+  for id, steps in pairs(script.steps) do
+    local slot = session.slots[id]
+    if slot and slot.connected and #steps > 0 then
+      seats[#seats + 1] = { id=id, slot=slot, generation=slot.connectionGeneration or 1 }
+    end
+  end
+  table.sort(seats, function(a, b) return a.id < b.id end)
+  return seats
+end
+
+local function sameConnection(session, member)
+  local slot = session.slots[member.id]
+  return slot == member.slot and slot.connected and (slot.connectionGeneration or 1) == member.generation
+end
+
 function Game:BeginPlayback(script)
   self.script = script
+  self.playbackSeats = playbackSeats(self.session, script)
+  self.playStarted = false
   self.playing = true
   self.playTime = 0
   self.playResult = nil
@@ -478,12 +517,29 @@ function Game:Step(dt, tick)
     return
   end
 
+  self.playbackSeats = self.playbackSeats or playbackSeats(self.session, self.script)
+  if not self.playStarted then
+    -- Menu may have just reserved a new logical seat. Start its script clock
+    -- only once the original owner has completed the neutral handshake.
+    for _, member in ipairs(self.playbackSeats) do
+      if sameConnection(self.session, member) and member.id ~= self.hostSeat
+          and GuestInput.supports(rom.data, member.id) then
+        local state = GuestInput.states(self)[member.id]
+        if not state or not state.ready then
+          self.playResult = "seat " .. member.id .. ": " ..
+            ((state and state.reason) or "waiting for room owner")
+          return
+        end
+      end
+    end
+    self.playStarted = true
+    dt = 0 -- The preceding interval elapsed before this playback was ready.
+  end
   self.playTime = (self.playTime or 0) + math.max(0, math.min(dt, 0.05))
   local active = false
-  for playerId = 1, Session.MAX_PLAYERS do
-    local slot = self.session.slots[playerId]
-    local steps = self.script.steps[playerId]
-    if slot and slot.connected and steps and #steps > 0 then
+  for _, member in ipairs(self.playbackSeats) do
+    local playerId = member.id
+    if sameConnection(self.session, member) then
       local mx, my, hasStep = Inputs.stick(self.script, playerId, self.playTime)
       local accepted, reason = self:SubmitInput(tick, playerId, { moveX = mx, moveY = my })
       if not accepted then
@@ -526,9 +582,9 @@ function Game:BodyReport()
   if map then
     parts[#parts + 1] = "map=" .. map
   end
-  for playerId = 2, 4 do
+  for _, playerId in ipairs(GuestInput.seats(self.hostSeat, self.session and self.session.slots)) do
     local slot = self.session and self.session.slots[playerId]
-    local guest = playerId == 2 and self.guestInput
+    local guest = GuestInput.states(self)[playerId]
     if slot and guest then
       local position = guest.id and (" id=" .. guest.id .. positionText(self, guest.id)) or ""
       local receipt = guest.sequence and (" appliedSeq=" .. guest.sequence) or ""
@@ -536,7 +592,7 @@ function Game:BodyReport()
       local binding = guest.id and (" load=" .. guest.load .. " publication=" .. guest.publication) or ""
       parts[#parts + 1] = playerId .. ":" .. slot.name .. ":" .. (guest.reason or "pending") .. position .. receipt .. idle .. binding
     elseif slot and slot.connected then
-      local pending = playerId == 2 and rom.data and rom.data.h2t_guest_owner
+      local pending = GuestInput.supports(rom.data, playerId)
       parts[#parts + 1] = playerId .. ":" .. slot.name .. (pending and ":awaiting room owner" or ":unsupported")
     end
   end

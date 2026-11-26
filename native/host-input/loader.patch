@@ -2,7 +2,23 @@ diff --git a/src/lua_extensions/bindings/hades/data.cpp b/src/lua_extensions/bin
 index 9b46c96..edceb9c 100644
 --- a/src/lua_extensions/bindings/hades/data.cpp
 +++ b/src/lua_extensions/bindings/hades/data.cpp
-@@ -14,0 +15 @@
+@@ -14,0 +15,11 @@
 +#include "observe-sampler-lua.hpp"
-@@ -532,0 +534 @@ namespace lua::hades::data
++void h2t_prepare_player_capacity() {
++    using namespace h2t_observe_runtime;
++    static SafetyHookMid initializer;
++    const auto base=reinterpret_cast<Addr>(GetModuleHandleW(nullptr));
++    if (initializer || !pinned_identity() || read<Addr>(base+0x831dc0)!=Addr{0}) return;
++    if (read<std::array<unsigned char,5>>(base+0x5895b)!=std::array<unsigned char,5>{0xe8,0x90,0x11,0x06,0x00}) return;
++    initializer=safetyhook::create_mid(base+0x5895b,h2t_players::reserve_at_first_allocation);
++}
++
++
+@@ -532,0 +544 @@ namespace lua::hades::data
 +    h2t_observe_runtime::bind(ns);
+diff --git a/src/main.cpp b/src/main.cpp
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -1552,0 +1553,2 @@ static void hook_sgg_App_Initialize(void *this_)
++	extern void h2t_prepare_player_capacity();
++	h2t_prepare_player_capacity();

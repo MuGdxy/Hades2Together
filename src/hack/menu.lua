@@ -4,6 +4,8 @@ local Bridge = import("dev/bridge.lua")
 local Console = import("dev/console.lua")
 local Inputs = import("dev/inputs.lua")
 
+local Session = import("protocol/session.lua")
+
 local Menu = {}
 
 function Menu.new(session)
@@ -39,6 +41,33 @@ function Menu.publish(control, game, state)
   end
 end
 
+local function preparePlayback(session, text)
+  local limit = Session.capacity(session)
+  local script = Inputs.parse(text, limit)
+  local ids = {}
+  for id in pairs(script.names) do ids[#ids + 1] = id end
+  for id, steps in pairs(script.steps) do
+    if not script.names[id] and #steps > 0 then ids[#ids + 1] = id end
+  end
+  table.sort(ids)
+
+  -- Resolve all names and reservations before publishing any new member.
+  local prospective = { maxPlayers = limit, slots = {} }
+  for id, slot in pairs(session.slots) do
+    prospective.slots[id] = { name = slot.name, connected = slot.connected }
+  end
+  for _, id in ipairs(ids) do
+    local slot = session.slots[id]
+    local name = script.names[id] or (slot and slot.name) or ("P" .. id)
+    local joined, reason = Session.join(prospective, name, id)
+    if joined ~= id then return nil, "seat " .. id .. ": " .. tostring(reason) end
+  end
+  for _, id in ipairs(ids) do
+    if not session.slots[id] then Session.join(session, prospective.slots[id].name, id) end
+  end
+  return script
+end
+
 function Menu.pump(control, game)
   game:UpdateInputOwner()
   local console = control.console
@@ -63,13 +92,12 @@ function Menu.pump(control, game)
     if not text then
       game.playResult = "failed missing inputs.txt; run h2t.ps1 play"
     else
-      local script = Inputs.parse(text)
-      for slot = 2, 4 do
-        if not console.session.slots[slot] then
-          Console.execute(console, "player add " .. (script.names[slot] or ("P" .. slot)))
-        end
+      local script, reason = preparePlayback(console.session, text)
+      if script then
+        game:BeginPlayback(script)
+      else
+        game.playing, game.playResult = false, reason
       end
-      game:BeginPlayback(script)
     end
   end
   local dt = 0

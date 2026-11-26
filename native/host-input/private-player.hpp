@@ -99,7 +99,7 @@ public:
         if (!initialized_ || GetCurrentThreadId() != thread_ || constructing) return false;
         const auto slots = Slots::current();
         if (!slots) return false;
-        for (unsigned i = 0; i < 2; ++i) {
+        for (unsigned i = 0; i < slots->size(); ++i) {
             const auto player = read<Addr>(slots->players + i * sizeof(Addr));
             if (!player || *player == player_) return false;
         }

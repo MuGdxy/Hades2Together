@@ -39,16 +39,50 @@ inline void bind(sol::table& ns) {
         }();
         return result;
     });
-    ns.set_function("h2t_guest_owner", [](sol::this_state lua, int host, std::uint64_t load,
-                                             int point, bool retain, std::uint64_t connection) {
+    // Optional final seat preserves the existing two-seat Lua ABI.
+    const auto seat_id=[](sol::optional<std::uint64_t> seat){return seat.value_or(2u);};
+    ns.set_function("h2t_guest_capacity", []() {
+        const auto slots=h2t_players::Slots::current();
+        return slots ? slots->capacity() : 0u;
+    });
+    ns.set_function("h2t_guest_seats", [](sol::this_state lua) {
+        auto ids=sol::state_view(lua).create_table();
+        unsigned n=0;
+        for (const auto& room:h2t_players::RoomGuest::rooms())
+            if (room && room->published()) ids[++n]=room->seat();
+        return ids;
+    });
+    ns.set_function("h2t_guest_owner", [seat_id](sol::this_state lua, int host, std::uint64_t load,
+                                             int point, bool retain, std::uint64_t connection, sol::optional<std::uint64_t> seat, sol::optional<bool> reserve) {
         auto out=sol::state_view(lua).create_table();
         namespace runtime=h2t_active_runtime;
-        auto& guest=h2t_players::room_guest;
+        const auto id=seat_id(seat);
+        if (!id || id==runtime::host_seat) {out["status"]="host seat uses original owner"; return out;}
+        auto* owner=h2t_players::guest_for(id);
         const auto t=GetCurrentThreadId();
         if (!h2t_observe::latest_on_game_thread().serial) return out;
+        if (!owner && retain && runtime::active_thread(t) && runtime::room_epoch==load && point>0) {
+            const auto slots=h2t_players::Slots::current();
+            if (slots && slots->primary(host)) owner=h2t_players::claim_guest(id,slots->capacity());
+            if (!owner) {
+                out["status"]=slots && slots->capacity()<playable_lanes
+                    ? "stock Player table already initialized without reserve"
+                    : "all native playable controller lanes reserved";
+                return out;
+            }
+        }
+        if (!owner) {out["epoch"]=0;out["status"]="empty";return out;}
+        auto& guest=*owner;
+        const unsigned lane=guest.lane();
+        auto& channel=runtime::guests[lane];
+        if (guest.epoch() && guest.epoch()!=load) {
+            out["epoch"]=guest.epoch();
+            out["status"]="different room owner";
+            return out;
+        }
         guest.maintain();
         if (!retain && (!guest.epoch() || guest.epoch()==load)) {
-            runtime::release_guest_input();
+            channel={};
             guest.leave(load);
         }
         if (runtime::active_thread(t) && runtime::room_epoch==load && retain && !guest.epoch() && point>0) {
@@ -57,31 +91,38 @@ inline void bind(sol::table& ns) {
                 return out;
             }
             const auto pads=stock_vector();
-            if (runtime::route().valid() && pads && add_guest_pad()) {
-                if (pads->count!=2 || !managed_topology(*pads)) {
-                    out["status"]="waiting for original second pad"; return out;
-                }
-                guest.queue_join(host,load,point,connection);
+            if (!runtime::route().valid() || !pads) {
+                out["status"]="stock host or pad route unavailable"; return out;
             }
+            if (!add_guest_pad(lane)) {
+                out["status"]="guest SDL device unavailable"; return out;
+            }
+            if (pads->count<=lane || !managed_topology(*pads)) {
+                out["status"]="waiting for original guest pad"; return out;
+            }
+            guest.queue_join(host,load,point,connection);
         }
         if (guest.published() && guest.epoch()==load && runtime::active_thread(t)) {
-            if (!runtime::guest_bound) runtime::guest_bound=runtime::guest_input.bind(t,runtime::route(1));
+            if (!channel.bound) channel.bound=channel.input.bind(t,runtime::route(lane));
             out["id"]=guest.id();
             out["publication"]=guest.publication();
-            out["inputBound"]=runtime::guest_bound;
-            const auto audit=runtime::guest_input.audit(t);
+            out["inputBound"]=channel.bound;
+            const auto audit=channel.input.audit(t);
             if (audit.result==h2t_active::Result::complete) {
                 out["sequence"]=audit.applied_sequence;
                 if (audit.reads==20 && !audit.changed && !audit.applied_sequence) out["idleBatch"]=audit.batch;
             }
-        } else if (runtime::guest_bound) runtime::release_guest_input();
+        } else if (channel.bound) channel={};
         out["epoch"]=guest.epoch();
         out["status"]=guest.status();
+        if (!retain && !reserve.value_or(false) && guest.reusable()) h2t_players::RoomGuest::rooms()[lane].reset();
         return out;
     });
-    ns.set_function("h2t_guest_actor", [](sol::this_state script) {
+    ns.set_function("h2t_guest_actor", [seat_id](sol::this_state script, sol::optional<std::uint64_t> seat) {
         auto out=sol::state_view(script).create_table();
-        const auto& guest=h2t_players::room_guest;
+        const auto* room=h2t_players::guest_for(seat_id(seat));
+        if (!room) return out;
+        const auto& guest=*room;
         const auto owner=guest.owner();
         if (!owner) return out;
         const auto state=read<Addr>(owner->unit+0x128);
@@ -103,22 +144,30 @@ inline void bind(sol::table& ns) {
         lua_settop(lua,top);
         return out;
     });
-    ns.set_function("h2t_guest_connection", [](std::uint64_t epoch,std::uint64_t publication,std::uint64_t token,bool online) {
+    ns.set_function("h2t_guest_connection", [seat_id](std::uint64_t epoch,std::uint64_t publication,std::uint64_t token,bool online,sol::optional<std::uint64_t> seat) {
         namespace runtime=h2t_active_runtime;
         const auto t=GetCurrentThreadId();
-        if (!runtime::active_thread(t) || !runtime::guest_bound ||
-            epoch!=h2t_players::room_guest.epoch() || publication!=h2t_players::room_guest.publication()) return false;
-        return online ? runtime::guest_input.connect(t,token) : runtime::guest_input.disconnect(t,token);
+        const auto* guest=h2t_players::guest_for(seat_id(seat));
+        if (!guest) return false;
+        auto& channel=runtime::guests[guest->lane()];
+        if (!runtime::active_thread(t) || !channel.bound ||
+            epoch!=guest->epoch() || publication!=guest->publication()) return false;
+        return online ? channel.input.connect(t,token) : channel.input.disconnect(t,token);
     });
-    ns.set_function("h2t_guest_clear", [](std::uint64_t publication,std::uint64_t token) {
-        return publication==h2t_players::room_guest.publication() && h2t_active_runtime::guest_clear(token);
+    ns.set_function("h2t_guest_clear", [seat_id](std::uint64_t publication,std::uint64_t token,sol::optional<std::uint64_t> seat) {
+        const auto* guest=h2t_players::guest_for(seat_id(seat));
+        return guest && publication==guest->publication() && h2t_active_runtime::guest_clear(guest->lane(),token);
     });
-    ns.set_function("h2t_guest_submit", [](std::uint64_t epoch,std::uint64_t publication,std::uint64_t token,std::uint64_t seq,
-                                           double x,double y,double aim_x,double aim_y,unsigned mask) {
+    ns.set_function("h2t_guest_submit", [seat_id](std::uint64_t epoch,std::uint64_t publication,std::uint64_t token,std::uint64_t seq,
+                                           double x,double y,double aim_x,double aim_y,unsigned mask,sol::optional<std::uint64_t> seat) {
         namespace runtime=h2t_active_runtime;
         const auto t=GetCurrentThreadId();
-        return runtime::active_thread(t) && runtime::guest_bound && epoch==h2t_players::room_guest.epoch() &&
-            publication==h2t_players::room_guest.publication() && runtime::guest_input.submit(t,token,seq,GetTickCount64(),{x,y,aim_x,aim_y,mask},runtime::route(1));
+        const auto* guest=h2t_players::guest_for(seat_id(seat));
+        if (!guest) return false;
+        const auto lane=guest->lane();
+        auto& channel=runtime::guests[lane];
+        return runtime::active_thread(t) && channel.bound && epoch==guest->epoch() &&
+            publication==guest->publication() && channel.input.submit(t,token,seq,GetTickCount64(),{x,y,aim_x,aim_y,mask},runtime::route(lane));
     });
     ns.set_function("h2t_sampler_resume", [](int hero) {
         if (h2t_active_runtime::game_thread.load() || !adapter_pad) return false;
@@ -133,7 +182,9 @@ inline void bind(sol::table& ns) {
         return true;
     });
     ns.set_function("h2t_sampler_arm", arm);
-    ns.set_function("h2t_active_bind", h2t_active_runtime::bind_after_neutral);
+    ns.set_function("h2t_active_bind", [](int hero,std::uint64_t epoch,sol::optional<std::uint64_t> seat) {
+        return h2t_active_runtime::bind_after_neutral(hero,epoch,seat.value_or(1));
+    });
     ns.set_function("h2t_active_revoke", h2t_active_runtime::revoke_room);
     ns.set_function("h2t_active_connect", h2t_active_runtime::connect);
     ns.set_function("h2t_active_disconnect", h2t_active_runtime::disconnect);
@@ -172,7 +223,7 @@ inline void bind(sol::table& ns) {
         out["outcome"]=name(result.trace.outcome);
         out["thread"]=result.trace.serial ? GetCurrentThreadId() : 0;
         out["count"]=result.trace.count;
-        if ((result.trace.count==1 || result.trace.count==2) && result.trace.outcome==Outcome::complete) {
+        if ((result.trace.count>0 && result.trace.count<=playable_lanes) && result.trace.outcome==Outcome::complete) {
             const auto& lane=result.trace.lanes[0];
             out["instance"]=result.instance;
             out["model"]=lane.pad.model;

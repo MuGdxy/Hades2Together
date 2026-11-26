@@ -1,23 +1,64 @@
 -- The room owns the actor. Only the input connection follows roster changes.
 local Guest = {}
 
+function Guest.states(game)
+  if not game.guestInputs then
+    game.guestInputs = {}
+    if game.guestInput then -- Reload an existing two-seat plugin.
+      game.guestInput.seatId = 2
+      game.guestInputs[2], game.guestInput = game.guestInput, nil
+    end
+  end
+  return game.guestInputs
+end
+
+function Guest.supports(native, seat)
+  return native and native.h2t_guest_owner and (native.h2t_guest_capacity or seat == 2)
+end
+
+-- The previous DLL exposed a single guest and expects the old argument count.
+local function call(native, seat, name, ...)
+  if not native.h2t_guest_capacity then return native[name](...) end
+  local args = table.pack(...)
+  args[args.n + 1] = seat
+  return native[name](table.unpack(args, 1, args.n + 1))
+end
+
+function Guest.actor(native, seat)
+  if native and native.h2t_guest_actor and (native.h2t_guest_capacity or seat == 2) then
+    return call(native, seat, "h2t_guest_actor")
+  end
+end
+
+function Guest.seats(hostSeat, slots, retained)
+  local ids = {}
+  for id in pairs(slots or {}) do
+    if id ~= hostSeat then ids[#ids + 1] = id end
+  end
+  for id in pairs(retained or {}) do
+    if not slots or not slots[id] then ids[#ids + 1] = id end
+  end
+  table.sort(ids)
+  return ids
+end
+
 local function sync(state, slot)
-  local generation = slot.connectionGeneration or 1
-  local eligible = state.actor and not state.actor.IsDead and slot.connected
+  local generation = slot and (slot.connectionGeneration or 1)
+  local eligible = slot and slot.connected and state.actor and not state.actor.IsDead
   if state.token and (not eligible or generation ~= state.connectionGeneration) then
-    if not state.native.h2t_guest_connection(state.load, state.publication, state.token, false) then
+    if not call(state.native, state.seatId, "h2t_guest_connection", state.load, state.publication, state.token, false) then
       state.reason = "secondary disconnect pending"
       return false
     end
     state.token, state.sequence, state.ready = nil, nil, false
   end
   if not eligible then
-    state.reason = slot.connected and "secondary actor unavailable" or "offline"
+    state.reason = slot and slot.connected and "secondary actor unavailable" or "offline"
     return false
   end
   if not state.token then
     local token = math.max(generation, (state.lastToken or 0) + 1)
-    if not state.native.h2t_guest_connection(state.load, state.publication, token, true) then
+    if not call(state.native, state.seatId, "h2t_guest_connection", state.load, state.publication, token, true) then
       state.reason = "secondary connection refused"
       return false
     end
@@ -27,23 +68,43 @@ local function sync(state, slot)
   return true
 end
 
-function Guest.update(game, native)
+local function updateSeat(game, native, seat)
   if not native or not native.h2t_guest_owner then return end
-  local state = game.guestInput
-  local slot = game.session and game.session.slots[2]
+  local state = Guest.states(game)[seat]
+  local slot = game.session and game.session.slots[seat]
   local _, room, hero, load = game:InputOwner()
+  if state and state.betweenRooms then
+    if state.session == game.session and state.slot == slot then
+      if not load then return end
+      state = nil
+    end
+    if not state then game.guestInputs[seat] = nil end
+  end
   if state and (state.session ~= game.session or not slot or slot ~= state.slot or load ~= state.load or room ~= state.room or hero ~= state.hero) then
-    local result = native.h2t_guest_owner(0, state.load, 0, false, 0)
+    local keep = state.session == game.session and slot ~= nil and state.slot == slot
+    local result
+    if native.h2t_guest_capacity then
+      result = native.h2t_guest_owner(0, state.load, 0, false, 0, seat, keep)
+    else
+      result = native.h2t_guest_owner(0, state.load, 0, false, 0)
+    end
     state.ready, state.sequence, state.id = false, nil, nil
     state.actor, state.token, state.offlineBatch = nil, nil, nil
     state.reason = result.status or "retirement pending"
-    if result.epoch == 0 then game.guestInput = nil end
+    if result.epoch == 0 then
+      if keep and native.h2t_guest_capacity then
+        game.guestInputs[seat] = { betweenRooms=true, seatId=seat, session=game.session,
+          slot=slot, load=state.load, reason="waiting for room" }
+      else
+        game.guestInputs[seat] = nil
+      end
+    end
     return
   end
   if not slot or not load then return end
   if not state then
-    state = { session = game.session, slot = slot, load = load, room = room, hero = hero, native = native }
-    game.guestInput = state
+    state = { seatId = seat, session = game.session, slot = slot, load = load, room = room, hero = hero, native = native }
+    game.guestInputs[seat] = state
   end
   local point
   if not state.sawOwner and game:LoadedRoom(room) and game.hostInput
@@ -54,7 +115,7 @@ function Guest.update(game, native)
     end
     point = game:GuestSpawnPoint(hero.ObjectId)
   end
-  local result = native.h2t_guest_owner(hero.ObjectId, load, point or 0, true, slot.connectionGeneration or 1)
+  local result = call(native, seat, "h2t_guest_owner", hero.ObjectId, load, point or 0, true, slot.connectionGeneration or 1)
   if not result.id then
     state.id, state.sequence, state.token, state.ready, state.actor = nil, nil, nil, false, nil
     if result.status == "empty" then
@@ -79,29 +140,39 @@ function Guest.update(game, native)
     if not slot.connected and not state.token then state.offlineBatch = result.idleBatch end
     return
   end
-  if not state.ready then state.ready = native.h2t_guest_clear(state.publication, state.token) end
+  if not state.ready then state.ready = call(native, seat, "h2t_guest_clear", state.publication, state.token) end
   if state.ready then state.reason, state.sequence = "ready", result.sequence end
 end
 
+function Guest.update(game, native)
+  local slots = game.session and game.session.slots
+  for _, seat in ipairs(Guest.seats(game.hostSeat, slots, Guest.states(game))) do
+    if Guest.supports(native, seat) then updateSeat(game, native, seat) end
+  end
+end
+
 function Guest.check(game)
-  local state = game.guestInput
-  if not state or not state.id or not state.token then return end
-  local slot = game.session.slots[2]
-  if slot == state.slot then sync(state, slot) end
+  for seat, state in pairs(Guest.states(game)) do
+    local slot = game.session and game.session.slots[seat]
+    if state.id and state.token then
+      sync(state, game.session == state.session and slot == state.slot and slot or nil)
+    end
+  end
 end
 
 function Guest.submit(game, frame)
-  local state = game.guestInput
-  local slot = game.session and game.session.slots[2]
+  local seat = frame.playerId
+  local state = Guest.states(game)[seat]
+  local slot = game.session and game.session.slots[seat]
   local _, room, hero, load = game:InputOwner()
   if not state or not state.id or not slot or slot ~= state.slot or load ~= state.load
-      or room ~= state.room or hero ~= state.hero then return false, "secondary owner unavailable" end
+      or room ~= state.room or hero ~= state.hero then return false, state and state.reason or "guest owner unavailable" end
   if not sync(state, slot) or not state.ready then return false, state.reason end
   if frame.aimX ~= 0 or frame.aimY ~= 0 or frame.buttons > 3 then return false, "unsupported secondary input" end
   if (frame.buttons ~= 0 or frame.moveX ~= 0 or frame.moveY ~= 0) and not game:InputAllowed() then
     return false, "stock input blocked"
   end
-  if not state.native.h2t_guest_submit(load, state.publication, state.token, frame.seq, frame.moveX, frame.moveY,
+  if not call(state.native, seat, "h2t_guest_submit", load, state.publication, state.token, frame.seq, frame.moveX, frame.moveY,
       frame.aimX, frame.aimY, frame.buttons) then return false, "secondary sample refused" end
   return true
 end
