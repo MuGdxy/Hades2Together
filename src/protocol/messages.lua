@@ -62,6 +62,25 @@ function Messages.validTick(tick)
   return integer(tick, 0, 9007199254740991)
 end
 
+function Messages.boonScope(opportunity)
+  if type(opportunity) ~= "string" or #opportunity > 50 then return end
+  local room, reward, round = opportunity:match("^([1-9]%d*)/([1-9]%d*)/([1-9]%d*)$")
+  room, reward, round = tonumber(room), tonumber(reward), tonumber(round)
+  if Messages.validTick(room) and Messages.validTick(reward) and Messages.validTick(round) then
+    return room, reward, round
+  end
+end
+
+-- The transport supplies the owner. No seat, actor or result is on this wire.
+function Messages.validBoon(msg)
+  if type(msg) ~= "table" or msg.t ~= "boon" or not Messages.boonScope(msg.opportunity)
+    or type(msg.option) ~= "string" or #msg.option > 128 or not msg.option:match("^[%w_]+$") then return false end
+  for key in pairs(msg) do
+    if key ~= "t" and key ~= "opportunity" and key ~= "option" then return false end
+  end
+  return true
+end
+
 local inputFields = {
   t = true, tick = true, playerId = true, seq = true,
   moveX = true, moveY = true, aimX = true, aimY = true, buttons = true,

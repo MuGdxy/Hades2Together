@@ -42,21 +42,27 @@ end
 
 local claimStates = { eligible = true, claiming = true, consumed = true }
 
-local function validOptions(claim)
+local function validOptions(claim, roomId, reward)
+  if claim.opportunity ~= nil or claim.grantOption ~= nil then
+    local room, offer = Messages.boonScope(claim.opportunity)
+    if room ~= roomId or offer ~= reward.id or not name(claim.grantOption) or claim.state == "consumed"
+      or claim.options == nil or claim.selected and claim.selected ~= claim.grantOption then return false end
+  end
   if claim.options == nil then return claim.selected == nil end
   local options = unique(claim.options, function(option) return name(option) and option end)
-  return options and (claim.selected == nil or (claim.state == "claiming" and options[claim.selected]))
+  return options and (claim.grantOption == nil or options[claim.grantOption])
+    and (claim.selected == nil or (claim.state == "claiming" and options[claim.selected]))
     and (claim.choice == nil or options[claim.choice])
 end
 
-local function rewardId(reward, participants, maxPlayers)
+local function rewardId(reward, participants, maxPlayers, roomId)
   if type(reward) ~= "table" or not id(reward.id) or not id(reward.encounterId)
     or not name(reward.kind) or (reward.objectId ~= nil and not id(reward.objectId)) then
     return nil
   end
   if reward.claims ~= nil and not unique(reward.claims, function(claim)
     if type(claim) == "table" and Session.validSeat(claim.playerId, maxPlayers) and claimStates[claim.state]
-      and (not participants or participants[claim.playerId]) and validOptions(claim)
+      and (not participants or participants[claim.playerId]) and validOptions(claim, roomId, reward)
       and (claim.choice == nil or claim.state == "consumed" and name(claim.choice)) then
       return claim.playerId
     end
@@ -91,7 +97,7 @@ function Room.valid(room, maxPlayers)
   end
   return (room.exits == nil or unique(room.exits, exitId) ~= nil)
     and (room.rewards == nil or unique(room.rewards, function(reward)
-      return rewardId(reward, participants, maxPlayers)
+      return rewardId(reward, participants, maxPlayers, room.id)
     end) ~= nil)
 end
 

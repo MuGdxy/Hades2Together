@@ -51,6 +51,8 @@ local function report()
   return result
 end
 Menu.publish(control, game, "polling")
+local wireClaim = game:ReadActors().room.rewards[1].claims[1]
+assert(wireClaim.playerId == 3 and wireClaim.opportunity == "7/2/4" and wireClaim.grantOption == name)
 assert(report():find("options=PoseidonWeaponBoon,PoseidonCastBoon opportunity=7/2/4 grantOption=PoseidonWeaponBoon", 1, true))
 local function pump(command)
   local file = assert(io.open(control.commandsPath, "wb"))

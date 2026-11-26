@@ -105,7 +105,14 @@ local function ownsSeat(server, peer)
     and (slot.connectionGeneration or 1) == peer.generation
 end
 
-local function acceptInput(peer, msg, maxPlayers)
+local function acceptRequest(server, peer, msg, maxPlayers)
+  if #peer.pending >= Tcp.MAX_MESSAGES then return reject(peer, "input queue full") end
+  if msg.t == "boon" then
+    if not server.game then return reject(peer, "boon unavailable") end
+    if not Messages.validBoon(msg) then return reject(peer, "invalid boon request") end
+    peer.pending[#peer.pending + 1] = msg
+    return
+  end
   if msg.t ~= "in" or not Messages.validInput(msg, maxPlayers) then
     return reject(peer, "invalid input")
   end
@@ -115,12 +122,9 @@ local function acceptInput(peer, msg, maxPlayers)
   if msg.seq <= peer.seq then
     return reject(peer, "stale sequence")
   end
-  if #peer.inputs >= Tcp.MAX_MESSAGES then
-    return reject(peer, "input queue full")
-  end
   peer.seq = msg.seq
   -- Copy only the input fields. The authority assigns the tick in step().
-  peer.inputs[#peer.inputs + 1] = Messages.input(
+  peer.pending[#peer.pending + 1] = Messages.input(
     nil, peer.playerId, msg.moveX, msg.moveY, msg.buttons, msg.aimX, msg.aimY, msg.seq
   )
 end
@@ -144,7 +148,7 @@ function Server:poll()
     local stream = Tcp.attach(raw)
     if stream then
       self.peers[#self.peers + 1] = {
-        stream = stream, joinedBy = now + HANDSHAKE_SECONDS, seq = 0, inputs = {},
+        stream = stream, joinedBy = now + HANDSHAKE_SECONDS, seq = 0, pending = {},
       }
     end
   end
@@ -166,7 +170,7 @@ function Server:poll()
       elseif self.readActors and not self.game then
         reject(peer, "observer connection is read-only")
       else
-        acceptInput(peer, item.msg, maxPlayers)
+        acceptRequest(self, peer, item.msg, maxPlayers)
       end
     end
     stream:flush()
@@ -189,11 +193,11 @@ end
 local function solve(server)
   local inputs = {}
   for _, peer in ipairs(server.peers) do
-    for _, input in ipairs(peer.inputs) do
+    for _, input in ipairs(peer.pending) do
       input.tick = server.authority.tick + 1
       inputs[#inputs + 1] = input
     end
-    peer.inputs = {}
+    peer.pending = {}
   end
   return Authority.step(server.authority, inputs)
 end
@@ -209,10 +213,18 @@ function Server:step(inputTick)
   if self.readActors then
     if self.game then
       for _, peer in ipairs(self.peers) do
-        local inputs = peer.inputs
-        peer.inputs = {}
-        for _, input in ipairs(inputs) do
-          local accepted, reason = self.game:SubmitInput(inputTick or self.tick + 1, peer.playerId, input)
+        local pending = peer.pending
+        peer.pending = {}
+        for _, request in ipairs(pending) do
+          if not ownsSeat(self, peer) then break end
+          local accepted, reason
+          if request.t == "boon" then
+            local room, reward, round = Messages.boonScope(request.opportunity)
+            accepted, reason = self.game:ClaimGuestBoon(peer.playerId, room, reward, round, request.option)
+            if not accepted then reason = "boon " .. request.opportunity .. " " .. request.option .. ": " .. tostring(reason) end
+          else
+            accepted, reason = self.game:SubmitInput(inputTick or self.tick + 1, peer.playerId, request)
+          end
           if not accepted then reject(peer, reason) end
         end
       end
@@ -230,7 +242,7 @@ function Server:step(inputTick)
     decisions = Messages.event("decisions", { tick = result.snapshot.tick, commands = result.commands })
   end
   for _, peer in ipairs(self.peers) do
-    if peer.playerId then
+    if ownsSeat(self, peer) then
       reply(peer, result.snapshot)
       if decisions then
         reply(peer, decisions)

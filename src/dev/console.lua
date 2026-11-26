@@ -112,10 +112,9 @@ function Console.execute(console, line, submitInput, submitBoon)
   if head == "boon" then
     if not Session.isAuthority(session) or not submitBoon then return "ERR boon requires local authority" end
     local seat = tonumber((words[2] or ""):match("^[1-9]%d*$") or "")
-    local room, reward, round = (words[3] or ""):match("^([1-9]%d*)/([1-9]%d*)/([1-9]%d*)$")
-    room, reward, round = tonumber(room), tonumber(reward), tonumber(round)
-    if #words ~= 4 or not Session.validSeat(seat, Session.capacity(session)) or not Session.validSeat(room)
-      or not Session.validSeat(reward) or not Session.validSeat(round) or #words[4] > 128 or not words[4]:match("^[%w_]+$") then
+    local room, reward, round = Messages.boonScope(words[3])
+    if #words ~= 4 or not Session.validSeat(seat, Session.capacity(session)) or not room
+      or #words[4] > 128 or not words[4]:match("^[%w_]+$") then
       return "ERR usage: boon <seat> <room/reward/round> <option>"
     end
     local id, reason = submitBoon(seat, room, reward, round, words[4])

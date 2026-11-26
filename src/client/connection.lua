@@ -130,4 +130,23 @@ function Client:close()
   self.transport:close()
 end
 
+function Client:chooseBoon(opportunity, option)
+  local request = { t = "boon", opportunity = opportunity, option = option }
+  if not Messages.validBoon(request) then return nil, "invalid boon request" end
+  local room = self.snapshot and self.snapshot.room
+  if not self.playerId or not room or room.leaving then return nil, "no current room offer" end
+  for _, reward in ipairs(room.rewards or {}) do
+    for _, claim in ipairs(reward.claims or {}) do
+      if claim.playerId == self.playerId and claim.opportunity == opportunity and claim.grantOption == option then
+        local ok, err = self.transport:send("boon", request)
+        if not ok then return nil, err end
+        self.transport:flush()
+        if self.transport.closed then return nil, self.transport.closed end
+        return true
+      end
+    end
+  end
+  return nil, "option unavailable in this seat's snapshot"
+end
+
 return Client

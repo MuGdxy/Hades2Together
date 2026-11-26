@@ -45,4 +45,9 @@ function Play:step(game)
   end
 end
 
+function Play:chooseBoon(opportunity, option)
+  if self.connection ~= "joined" then return nil, "seat not connected" end
+  return self.client:chooseBoon(opportunity, option)
+end
+
 return Play

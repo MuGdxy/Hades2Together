@@ -204,7 +204,7 @@ end
 return function(root, test, eq)
   local hasSocket, socket = pcall(require, "socket")
   if hasSocket then
-    test("play samples reach the assigned live CLI seat over TCP and receive authoritative snapshots", function()
+    test("play input and boon requests use the current TCP seat and receive authoritative snapshots", function()
       local host, guest = mockLoader(root), mockLoader(root)
       host.edits["config.lua"] = 'return {role="serve", playerPort=0}'
       host.edits["hack/game.lua"] = readSource(root, "hack/game.lua")
@@ -280,12 +280,65 @@ return function(root, test, eq)
       eq(host.inputs[#host.inputs].seat, seat)
       assert(host.inputs[#host.inputs].frame.seq > lastSeq)
       assert(host.observedGame.session.slots[seat] == slot)
+      -- Only the game-side offer and grant result are fixtures. Both plugin
+      -- endpoints, the authenticated request and the snapshot use real TCP.
+      local game = host.observedGame
+      host:queue("player add Other\n")
+      local option, opportunity = "PoseidonWeaponBoon", "7/2/1"
+      local claim = { playerId = seat, state = "eligible", options = { option },
+        opportunity = opportunity, grantOption = option }
+      local other = { playerId = 3, state = "eligible", options = { option },
+        opportunity = "7/2/2", grantOption = option }
+      local readActors = game.ReadActors
+      function game:ReadActors()
+        local actors = readActors(self)
+        actors.room = { id = 7, name = "F_Combat01", leaving = false, exitsUnlocked = false,
+          rewards = { { id = 2, encounterId = 1, kind = "PoseidonUpgrade", claims = { claim, other } } } }
+        return actors
+      end
+      local token, selections = {}, 0
+      function game:SelectBoon(room, reward, beneficiary, choice, round)
+        assert(room == 7 and reward == 2 and round == 1 and beneficiary == seat and choice == option)
+        selections = selections + 1
+        return token
+      end
+      function game:GrantGuestBoon(room, reward, beneficiary, selection)
+        assert(room == 7 and reward == 2 and beneficiary == seat and selection == token)
+        claim.state, claim.choice, claim.opportunity, claim.grantOption = "consumed", option, nil, nil
+        return "fixture-instance"
+      end
+      local function remoteClaim()
+        local snap = guest.public.getRemoteSnapshot()
+        return snap and snap.room and snap.room.rewards and snap.room.rewards[1].claims[1]
+      end
+      untilSeen(function() return remoteClaim() and remoteClaim().opportunity == opportunity end)
+      assert(game.session.slots[3].name == "Other")
+      assert(not guest.public.chooseRemoteBoon("7/2/2", option))
+      assert(not guest.public.chooseRemoteBoon(opportunity, "PoseidonCastBoon"))
+      -- Even a hand-written frame cannot name a different beneficiary.
+      local writer = assert(import("net/tcp.lua").attach(raw))
+      assert(writer:send("boon", { t = "boon", playerId = 3, opportunity = opportunity, option = option }))
+      writer:flush()
+      untilSeen(function() return guest:status():find("invalid boon request", 1, true) end)
+      eq(selections, 0)
+      assert(guest.public.chooseRemoteBoon(opportunity, option))
       -- An old socket may already have bytes pending when the CLI replaces its generation.
       previous = #host.inputs
       host:queue("player remove Remote\nplayer add Remote\n")
       untilSeen(function() return guest:status():find("connection=retrying", 1, true) end)
       eq(#host.inputs, previous)
+      eq(selections, 0)
       assert(slot.connected and slot.connectionGeneration == 3)
+      host:queue("player remove Remote\n")
+      untilSeen(function() return slot.connectionGeneration == 4 and remoteClaim() and remoteClaim().opportunity end)
+      local own = remoteClaim()
+      assert(guest.public.chooseRemoteBoon(own.opportunity, own.grantOption))
+      untilSeen(function() return remoteClaim() and remoteClaim().state == "consumed" end)
+      eq(selections, 1)
+      eq(remoteClaim().playerId, seat)
+      eq(remoteClaim().choice, option)
+      eq(guest.public.getRemoteSnapshot().room.rewards[1].claims[2].state, "eligible")
+      assert(not guest.public.chooseRemoteBoon(opportunity, option))
       eq(#guest.maps, 0)
       eq(guest.polls, 0)
       raw:close()

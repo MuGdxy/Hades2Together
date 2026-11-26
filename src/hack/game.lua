@@ -231,7 +231,7 @@ local function readRoom(self, game, room, rewardsOnly)
   for _, receipt in ipairs(load.boonClaims or {}) do
     local claims = Boon.claims(receipt, not live or live.reward ~= receipt)
     if #claims > 0 then
-      if rewardsOnly and live and live.reward == receipt then
+      if live and live.reward == receipt then
         for _, claim in ipairs(claims) do
           local round, option = guestCommandRound(receipt, claim.playerId)
           if round and claim.state ~= "consumed" then
@@ -285,6 +285,12 @@ function Game:SelectBoon(roomId, rewardId, seat, choice, round)
     end
   end
   return selection
+end
+
+function Game:ClaimGuestBoon(seat, room, reward, round, choice)
+  local selection = self:SelectBoon(room, reward, seat, choice, round)
+  if not selection then return nil, "option unavailable for this seat or opportunity" end
+  return self:GrantGuestBoon(room, reward, seat, selection)
 end
 
 function Game:RoomRewards()

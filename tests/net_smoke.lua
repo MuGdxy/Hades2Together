@@ -126,7 +126,7 @@ local function serve()
   equal(engine.heroes[1], hero, "reserved actor retained")
   waitFor("queued input from the new connection", function()
     assert(server:poll())
-    return #server.peers == 1 and #server.peers[1].inputs == 1
+    return #server.peers == 1 and #server.peers[1].pending == 1
   end)
   assert(server:step())
   equal(#received, 6, "accepted inputs after reconnect")

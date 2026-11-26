@@ -83,9 +83,7 @@ function Menu.pump(control, game)
   local results = Bridge.sync(console, control.commandsPath, function(playerId, state)
     return game:SubmitInput(tick, playerId, state)
   end, function(seat, room, reward, round, choice)
-    local selection = game:SelectBoon(room, reward, seat, choice, round)
-    if not selection then return nil, "option unavailable for this seat or opportunity" end
-    return game:GrantGuestBoon(room, reward, seat, selection)
+    return game:ClaimGuestBoon(seat, room, reward, round, choice)
   end)
   if #results > 0 then
     control.results = results

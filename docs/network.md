@@ -32,7 +32,9 @@ python tests/net_smoke.py --lua texlua
 
 客户端插件的 `public.getRemoteSnapshot()` 返回最近一份完整权威快照及当前获配席号。控制目录的 `status.txt` 在 `control=play` 下提供 `connection`、`seat`、`sentSeq`、快照 `tick`、角色及最近一次 `reason`。`sentSeq` 表示连接已发送的帧；实际原版消费序号仍以权威端角色回执为准。控制页用这份快照展示权威端报告的状态。
 
-执行 `texlua tests/run.lua` 可用 LuaSocket 回环和模拟游戏边界重放正式启动、分席、采样、回传及重连。
+访客可从快照 `room.rewards[].claims[]` 找到 `playerId` 等于获配席号的记录。当该记录给出 `opportunity` 和 `grantOption` 时，调用 `public.chooseRemoteBoon(claim.opportunity, claim.grantOption)`。当前支持普通新增的 `PoseidonWeaponBoon`。玩家端口发送 `{t="boon", opportunity="房间/奖励/轮次", option="PoseidonWeaponBoon"}`，权威端在执行时按连接绑定的席号与代际复核。返回 `true` 表示已提交发送；领取成功以随后权威快照中本席的 `state="consumed"` 和 `choice` 为准。权威拒绝通过现有 `error` 消息返回原因。同名重连后从新连接的快照恢复，play 和 observer 控制页保持只读。
+
+执行 `texlua tests/run.lua` 可用 LuaSocket 回环和模拟游戏边界重放正式启动、分席、采样、选择祝福、回传及重连。
 
 插件启动时从 `config.maxPlayers` 设置会话容量，默认四席。独立权威可通过 `Server.listen` 的 `options.maxPlayers` 设置同一容量。客户端从 `welcome.maxPlayers` 读取容量，历史握手省略该字段时沿用四席。CLI 和回放脚本使用会话容量校验席号；回放脚本可以只指定第五席，空席保留。实机可用角色及输入通道由原生适配层确认。
 

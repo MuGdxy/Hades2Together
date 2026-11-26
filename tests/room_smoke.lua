@@ -66,7 +66,7 @@ local function serve()
       return false
     end
     for _, peer in ipairs(server.peers) do
-      if not peer.playerId or #peer.inputs ~= 1 then
+      if not peer.playerId or #peer.pending ~= 1 then
         return false
       end
     end

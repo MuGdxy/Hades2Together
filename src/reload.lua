@@ -37,7 +37,7 @@ local function candidateRuntime()
     ["hack/menu.lua"] = { "new", "pump", "publish" },
     ["hack/game.lua"] = { "new", "Install", "OnMap", "CheckEnter",
       "Enter", "BeginPlayback", "PushInput", "SubmitInput", "UpdateInputOwner", "Step", "BodyReport", "RoomRewards",
-      "SelectBoon", "GrantGuestBoon", "ObserveTraitGrant" },
+      "SelectBoon", "GrantGuestBoon", "ClaimGuestBoon", "ObserveTraitGrant" },
     ["dev/bridge.lua"] = { "controlRoot", "sync", "statusText", "claimLines" },
     ["dev/console.lua"] = { "new", "execute" },
     ["dev/inputs.lua"] = { "parse", "stick" },
@@ -152,6 +152,7 @@ local function startPlayers()
   if config.role == "play" then
     playerClient = envyImport("client/play.lua").new(socket, config)
     public.getRemoteSnapshot = function() return playerClient.snapshot, playerClient.seat end
+    public.chooseRemoteBoon = function(opportunity, option) return playerClient:chooseBoon(opportunity, option) end
   else
     playerServer = assert(envyImport("authority/server.lua").live(socket, config.playerPort, gameState, config.bindAddress))
     rom.log.info("[Hades2Together] player listener " .. (config.bindAddress or "127.0.0.1") .. ":" .. playerServer:port())
