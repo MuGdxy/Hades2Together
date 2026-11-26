@@ -14,6 +14,7 @@ until client or socket.gettime() > deadline
 assert(client, "authority observer unavailable")
 local output = assert(io.open(root .. "/snapshots.tsv", "wb"))
 local received = false
+local ready = false
 while true do
   local events, failure = client:poll()
   for _, event in ipairs(events or {}) do
@@ -26,6 +27,14 @@ while true do
       for _, enemy in ipairs(snap.enemies) do output:write(prefix, Bridge.actorLine("enemy", enemy), "\n") end
       for _, line in ipairs(Bridge.claimLines(room and room.rewards)) do output:write(prefix, line, "\n") end
       output:flush()
+      if not ready and room and room.name == "F_Combat02" and not room.leaving and snap.heroes[1] then
+        local path = root .. "/room-ready.txt"
+        local marker = assert(io.open(path .. ".tmp", "wb"))
+        assert(marker:write(("room=%s id=%d tick=%d hero=%d\n"):format(room.name, room.id, snap.tick, snap.heroes[1].id)))
+        assert(marker:close())
+        assert(os.rename(path .. ".tmp", path))
+        ready = true
+      end
     end
   end
   if failure then

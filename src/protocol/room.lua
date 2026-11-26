@@ -66,6 +66,11 @@ local function rewardId(reward, participants, maxPlayers, roomId)
     or not name(reward.kind) or (reward.objectId ~= nil and not id(reward.objectId)) then
     return nil
   end
+  if reward.x ~= nil or reward.y ~= nil then
+    if not reward.objectId or type(reward.x) ~= "number" or type(reward.y) ~= "number"
+      or not (math.abs(reward.x) < math.huge and math.abs(reward.y) < math.huge) then return nil end
+  end
+  if reward.hostUseTarget ~= nil and (not reward.objectId or type(reward.hostUseTarget) ~= "boolean") then return nil end
   if reward.claims ~= nil and not unique(reward.claims, function(claim)
     if type(claim) == "table" and Session.validSeat(claim.playerId, maxPlayers) and claimStates[claim.state]
       and (not participants or participants[claim.playerId]) and validOptions(claim, roomId, reward)

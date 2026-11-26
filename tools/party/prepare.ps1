@@ -56,10 +56,15 @@ foreach ($name in 'Authority','PlayerA','PlayerB','PlayerC','PlayerD') {
 # interactively with ffmpeg's q so a real party is not cut off at 45 seconds.
 $capture = [IO.File]::ReadAllText((Resolve-Path $CaptureHelper))
 $capture = $capture.Replace('-nostdin ', '').Replace('-t $Seconds ', '').Replace('UtcNow.AddSeconds(6)', 'UtcNow.AddSeconds(45)')
+$capture = $capture.Replace('$game = Get-Process', ". `"`$PSScriptRoot/game-window.ps1`"`r`n" + '$game = Get-Process')
+$capture = $capture.Replace('$game.MainWindowHandle.ToInt64()', '[PartyGameWindow]::Find($GamePid)')
+$capture = $capture.Replace('$($game.MainWindowTitle)', 'Hades II')
+$capture = $capture.Replace('$ownerPid -ne $GamePid)', '$ownerPid -ne $GamePid -or [PartyGameWindow]::Find($GamePid) -ne $handle)')
+Copy-Item "$PSScriptRoot/game-window.ps1" $root
 [IO.File]::WriteAllText("$root/record.ps1", $capture)
 $events = (New-Item -ItemType Directory "$plugins/H2T-PartyObserver").FullName
 Copy-Item "$PSScriptRoot/events.lua" "$events/main.lua"
 [IO.File]::WriteAllText("$events/manifest.json", '{"namespace":"H2T","name":"PartyObserver","version_number":"0.0.1","description":"Isolated original fire and hit recorder","dependencies":[]}')
-Copy-Item "$PSScriptRoot/host.ps1","$PSScriptRoot/observe.lua" $root
+Copy-Item "$PSScriptRoot/host.ps1","$PSScriptRoot/observe.lua","$PSScriptRoot/operate.py" $root
 $null = New-Item -ItemType Directory "$root/profile/Hades2Together" -Force
 "Prepared $root for $Address TCP 27780"

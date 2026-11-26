@@ -15,6 +15,8 @@ $party = Join-Path $env:AGENT_SERVER_TMP 'h2t-party-session'
 
 ## 执行
 
+同机管道操作可运行 `python "$party/operate.py" "$party"`。订阅者收到完整开场快照后写入 `room-ready.txt`，脚本再启动四个普通玩家终端，按各自席号和回传快照操作。首席从当前掉落的 `x/y` 向原版物件移动，在 `hostUseTarget=true` 时提交显式零，并在后续快照仍指向同一物件时按 Use。采集器按隔离进程 PID 和唯一的 `Hades II` 标题选择窗口。结束时使用下文的录像终端 `q` 和游戏窗口正常关闭流程。
+
 1. 获准使用空闲 GPU 后，在权威机独立终端运行 `powershell -NoProfile -ExecutionPolicy Bypass -File "$party/host.ps1" -Run`。它启动禁存档游戏、只读快照订阅和录像终端。
 2. 权威开始监听后，在四个终端分别运行各包的玩家入口。下例为第一个终端，其余将 PlayerA 改成 PlayerB、PlayerC、PlayerD。玩家也可在各自机器运行收到的包。每个终端输出的 `joined` 行给出实际席位。`status` 显示本机 `seat`、`sentSeq` 及最新权威快照，角色和领取行均带席号。四个角色都应在奖励首次生成前绑定。
 

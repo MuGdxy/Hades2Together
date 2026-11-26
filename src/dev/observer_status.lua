@@ -33,6 +33,8 @@ local function roomLines(lines, room)
 
   for _, reward in ipairs(room.rewards or {}) do
     local object = reward.objectId and " objectId=" .. reward.objectId or ""
+    if reward.x ~= nil and reward.y ~= nil then object = object .. " x=" .. reward.x .. " y=" .. reward.y end
+    if reward.hostUseTarget ~= nil then object = object .. " hostUseTarget=" .. tostring(reward.hostUseTarget) end
     lines[#lines + 1] = "reward id=" .. reward.id .. " kind=" .. reward.kind
       .. " encounterId=" .. reward.encounterId .. object
   end

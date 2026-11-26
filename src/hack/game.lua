@@ -236,6 +236,14 @@ local function readRoom(self, game, room, rewardsOnly)
         end
       end
       visibleReward = { id = offerId, encounterId = id, objectId = reward.ObjectId, kind = reward.Name }
+      if not rewardsOnly then
+        local x, y = self:location(reward.ObjectId)
+        if finite(x) and finite(y) then visibleReward.x, visibleReward.y = x, y end
+        if game.SessionMapState then
+          local target = game.SessionMapState.ActiveUseTarget
+          visibleReward.hostUseTarget = type(target) == "table" and target.ObjectId == reward.ObjectId
+        end
+      end
     end
   end
   -- Link a visible offer retained across reload before projecting each receipt.
@@ -252,6 +260,7 @@ local function readRoom(self, game, room, rewardsOnly)
       end
       local row = { id = receipt.id, kind = receipt.kind, encounterId = receipt.encounterId, claims = claims }
       if visibleReward and visibleReward.id == row.id then
+        row.x, row.y, row.hostUseTarget = visibleReward.x, visibleReward.y, visibleReward.hostUseTarget
         row.objectId, visibleReward = visibleReward.objectId, nil
       end
       view.rewards = view.rewards or {}
