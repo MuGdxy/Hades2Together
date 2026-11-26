@@ -155,6 +155,93 @@ function Stock.readOptions(game, g, load)
   return offer, false
 end
 
+-- Authority-only commit of the selection issued by Game:SelectBoon. The
+-- caller supplies no actor, rarity or instance data.
+function Stock.grantGuest(game, roomId, rewardId, seat, selection)
+  local g, session = rom.game, game.session
+  if not session or not Session.isAuthority(session) or type(selection) ~= "table"
+    or selection.seat ~= seat then return nil, "invalid selection" end
+  local load = g.CurrentRun and game:LoadedRoom(g.CurrentRun.CurrentRoom)
+  local offer = load and load.boonOffer
+  if not offer or load.id ~= roomId or offer.id ~= rewardId then return nil, "stale opportunity" end
+  local reward = offer.reward
+  local member = reward and reward.guests and reward.guests[seat]
+  local entry = reward and reward.seats and reward.seats[seat]
+  local function bound()
+    return member and entry and offer.reward == reward and reward.guests[seat] == member and reward.seats[seat] == entry
+      and member.slot == session.slots[seat] and entry.slot == member.slot
+      and member.slot.connected and entry.actor == member.actorId and member.unit.ObjectId == member.actorId
+      and game:BoundGuestUnit(seat) == member.unit
+  end
+  if not bound() then return nil, "guest binding changed" end
+  if entry.consumed and entry.grantedSelection == selection then return entry.instanceId end
+  local name = entry.selected
+  if entry.pending ~= selection or name ~= "PoseidonWeaponBoon" or Stock.current(g, load) ~= offer
+    or offer.source.StackOnly or offer.source.UpgradeOnPick then
+    return nil, "no matching ordinary selection"
+  end
+  local roll = member.rolls[member.round]
+  local rarity = roll.rarities and roll.rarities[name]
+  if not rarity then return nil, "missing rolled rarity" end
+  local definition = g.TraitData and g.TraitData[name]
+  local level = definition and definition.RarityLevels and definition.RarityLevels[rarity]
+  -- The duration-adjustment branch of ProcessTraitData uses the host cache.
+  -- This ordinary boon has no duration and has a fixed multiplier per rarity.
+  if not level or type(level.Multiplier) ~= "number" or definition.RemainingUses ~= nil then
+    return nil, "unsupported trait definition"
+  end
+  if entry.preparing then return nil, "grant in progress" end
+
+  local unit = member.unit
+  entry.preparing = true
+  local ok, trait = pcall(g.GetProcessedTraitData, { Unit = unit, TraitName = name, Rarity = rarity, StackNum = 1 })
+  entry.preparing = nil
+  if not ok then return nil, tostring(trait) end
+  if type(trait) ~= "table" or trait.Name ~= name or trait.Rarity ~= rarity or trait.Slot ~= "Melee"
+    or trait.RarityMultiplier ~= level.Multiplier or trait.StackNum ~= 1 or trait.Id ~= nil or trait == definition then
+    return nil, "invalid processed trait"
+  end
+  if game.session ~= session or not Session.isAuthority(session) or not g.CurrentRun
+    or game:LoadedRoom(g.CurrentRun.CurrentRoom) ~= load or Stock.current(g, load) ~= offer
+    or not bound() or entry.pending ~= selection or entry.selected ~= name or member.rolls[member.round] ~= roll then
+    return nil, "selection changed during processing"
+  end
+
+  local traits, dictionary, slots = unit.Traits, unit.TraitDictionary, unit.SlottedTraits
+  local host = g.CurrentRun.Hero
+  if type(traits) ~= "table" or type(dictionary) ~= "table" or (slots ~= nil and type(slots) ~= "table")
+    or traits == host.Traits or dictionary == host.TraitDictionary or (slots and slots == host.SlottedTraits) then
+    return nil, "missing private trait storage"
+  end
+  if dictionary[name] or (slots and slots.Melee) then return nil, "melee slot occupied" end
+  local id = table.concat({ "h2t", roomId, rewardId, seat, unit.ObjectId }, "/")
+  for _, owned in pairs(traits) do
+    if owned.Slot == "Melee" or owned.Name == name or owned.Id == id then return nil, "trait conflict" end
+  end
+  -- These are the attached Unit's Lua tables. Finish all stock calls before
+  -- publishing into them; preserve the table identities used by other readers.
+  local index, bySlot = #traits + 1, slots or {}
+  trait.Id, trait.SourceName = id, offer.source.Name
+  rawset(traits, index, trait)
+  rawset(dictionary, name, { trait })
+  rawset(bySlot, "Melee", name)
+  if not slots then rawset(unit, "SlottedTraits", bySlot) end
+  local added = unit.Traits[index]
+  if added == trait and unit.TraitDictionary[name][1] == added and unit.SlottedTraits.Melee == name
+    and added.Name == name and added.Rarity == rarity and added.Id == id and added.StackNum == 1 then
+    local checked, confirmed = pcall(Boon.confirm, session, reward, selection, unit.ObjectId, added.Name, added.Id)
+    if checked and confirmed then
+      entry.grantedSelection, entry.rarity = selection, added.Rarity
+      return added.Id
+    end
+  end
+  rawset(traits, index, nil)
+  rawset(dictionary, name, nil)
+  rawset(bySlot, "Melee", nil)
+  if not slots then rawset(unit, "SlottedTraits", nil) end
+  return nil, "grant not confirmed"
+end
+
 local function selected(game, g, unit, data, args)
   local run = g.CurrentRun
   if not run or not unit or unit ~= run.Hero or type(data) ~= "table"

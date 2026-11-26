@@ -103,9 +103,13 @@ python tests/net_smoke.py --lua lua --stock-room
 
 访客的优先项按该特质支持的等级和本轮权重抽定稀有度，补位项保留选中它的稀有度池。权威按机会、席位和轮次保存结果。`Game:SelectBoon` 的第一返回值仍是选择凭据；访客有完整抽取记录时，第二返回值是该项的 `Type`、`ItemName`、`Rarity` 副本。升级前只有权重的旧轮次保留选择凭据，稀有度保持未知。
 
-以 `PoseidonWeaponBoon` 为例，安装版 `AddTrait(guest, name, rarity, args)` 进入 `AddTraitData` 后先设置共用档案的 `GameState.TraitsTaken[name]`，然后才插入访客实例。`SkipQuestStatusCheck` 仅跳过任务检查。这个标记会被原版祝福和任务提示读取。插入后的非宿主分支还调用 `GetTraitCount(unit, newTrait)`，该调用的调试断言要求当前英雄，继续执行时按宿主特质字典读数量。见 `TraitLogic.lua:541–556, 859–900, 1061–1074` 和 `UpgradeChoiceLogic.lua:618–620`。访客授予仍需可按受益 Unit 计数、隔离领取历史的接口。正式适配层保留选择待确认。
+以 `PoseidonWeaponBoon` 为例，安装版 `AddTrait(guest, name, rarity, args)` 进入 `AddTraitData` 后先设置共用档案的 `GameState.TraitsTaken[name]`，然后才插入访客实例。`SkipQuestStatusCheck` 仅跳过任务检查。这个标记会被原版祝福和任务提示读取。插入后的非宿主分支还调用 `GetTraitCount(unit, newTrait)`，该调用的调试断言要求当前英雄，继续执行时按宿主特质字典读数量。见 `TraitLogic.lua:541–556, 859–900, 1061–1074` 和 `UpgradeChoiceLogic.lua:618–620`。
 
 聚焦复现命令为 `texlua tests/stock_guest_boon_source.lua "<游戏目录>/Content/Scripts" grant`。它用夹具绑定的第三席调用安装版授予函数，核对抽定的 Rare、共用历史的写入，以及严格调试断言触发时已经插入的访客实例。引擎的时钟、随机后缀和说明文字用的基础伤害由夹具提供。此次只验证授予边界。
+
+权威调用 `Game:GrantGuestBoon(roomId, rewardId, seat, selection)` 提交普通新增的 `PoseidonWeaponBoon`。`selection` 来自同席的 `SelectBoon`。适配层从当前轮读取稀有度，使用原版 `GetProcessedTraitData` 为已绑定 Unit 加工一层特质，按该 Unit 的 `Traits`、`TraitDictionary` 和 `SlottedTraits` 核对新实例。匹配名称、稀有度和实例 ID 后，同一条选择变为 `consumed`。函数成功返回实例 ID，失败返回 `nil, reason`。同一机会和绑定下重提成功凭据返回原 ID。共享发现历史由原版维护，个人领取记录归属于该机会的席位与角色。
+
+运行 `texlua tests/stock_guest_boon_source.lua "<游戏目录>/Content/Scripts" unit-grant` 可复现授予与回读。原版脚本负责稀有度加工；原生席位绑定由夹具提供。用例覆盖换绑拒绝、确认冲突回滚、同凭据重试，以及同名宿主特质保持原数量。该接口的验收止于访客持有的实例。
 
 ## 后续原版接入
 

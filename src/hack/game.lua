@@ -13,6 +13,7 @@ local Session = import("protocol/session.lua")
 
 local Game = { hostSeat = 1 } -- Default for instances retained across plugin reload.
 Game.ObserveTraitGrant = StockBoon.onGrant
+Game.GrantGuestBoon = StockBoon.grantGuest
 
 function Game.new(session, hostSeat)
   return setmetatable({

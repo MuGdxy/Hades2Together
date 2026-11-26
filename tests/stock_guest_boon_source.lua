@@ -1,5 +1,6 @@
 -- Standalone retail candidate-source probe. Pass "grant" for the isolated
--- guest selection and original grant side-effect replay.
+-- guest selection and original grant side-effect replay, or "unit-grant" for
+-- the authority's actor-addressed grant.
 local scripts = assert(arg[1], "pass the installed Content/Scripts directory")
 local stock = setmetatable({
   Import = function() end, OnSpawn = function() end,
@@ -29,27 +30,28 @@ host.ObjectId, guest.ObjectId = 40000, 1000002
 stock.CurrentRun = { Hero = host, CurrentRoom = {}, BannedTraits = {} }
 local owned = { Name = "PoseidonWeaponBoon", Slot = "Melee", RestrictBoonChoices = true }
 guest.Traits[1], guest.TraitDictionary[owned.Name] = owned, { owned }
-assert(stock.GetTotalTraitCount(guest) == 1 and stock.GetTotalTraitCount(host) == 0)
-local countAssertion
-stock.DebugAssert = function(args) countAssertion = args.Condition end
-assert(stock.GetTraitCount(guest, { Name = owned.Name }) == 0 and countAssertion == false)
-
--- Three priority entries avoid random trimming and isolate the beneficiary
--- lookup. The same trait is already owned and its slot occupied on the guest.
 local loot = { Name = "PoseidonUpgrade", GodLoot = true,
   PriorityUpgrades = { owned.Name, "PoseidonSpecialBoon", "PoseidonCastBoon" } }
-stock.SetTraitsOnLoot(loot, { Unit = guest })
-assert(loot.UpgradeOptions[1].ItemName == owned.Name and #loot.UpgradeOptions == 3)
-assert(stock.CalcNumLootChoices(loot, { Unit = guest }) == 3)
-print("guest owns PoseidonWeaponBoon and restricts choices; retail roll with Unit=guest still offers it, limit=3")
+if arg[2] ~= "unit-grant" then
+  assert(stock.GetTotalTraitCount(guest) == 1 and stock.GetTotalTraitCount(host) == 0)
+  local countAssertion
+  stock.DebugAssert = function(args) countAssertion = args.Condition end
+  assert(stock.GetTraitCount(guest, { Name = owned.Name }) == 0 and countAssertion == false)
 
--- Even a helper that accepts Unit caches the lookup on the primary Hero.
-local key = "RestrictBoonChoices"
-assert(stock.GetHeroTraitValues(key, { Unit = guest })[1] == true)
-assert(host.HeroTraitValuesCache[key][1] == true and guest.HeroTraitValuesCache[key] == nil)
-assert(stock.GetHeroTraitValues(key)[1] == true and not stock.HasHeroTraitValue(key))
-assert(stock.CurrentRun.Hero == host)
-print("original trait-value lookup on guest populated host cache; CurrentRun.Hero stayed the host")
+  -- Three priority entries avoid random trimming and isolate the beneficiary lookup.
+  stock.SetTraitsOnLoot(loot, { Unit = guest })
+  assert(loot.UpgradeOptions[1].ItemName == owned.Name and #loot.UpgradeOptions == 3)
+  assert(stock.CalcNumLootChoices(loot, { Unit = guest }) == 3)
+  print("guest owns PoseidonWeaponBoon and restricts choices; retail roll with Unit=guest still offers it, limit=3")
+
+  -- Even a helper that accepts Unit caches the lookup on the primary Hero.
+  local key = "RestrictBoonChoices"
+  assert(stock.GetHeroTraitValues(key, { Unit = guest })[1] == true)
+  assert(host.HeroTraitValuesCache[key][1] == true and guest.HeroTraitValuesCache[key] == nil)
+  assert(stock.GetHeroTraitValues(key)[1] == true and not stock.HasHeroTraitValue(key))
+  assert(stock.CurrentRun.Hero == host)
+  print("original trait-value lookup on guest populated host cache; CurrentRun.Hero stayed the host")
+end
 
 -- Feed that same owned/restricted Unit through the production room projection.
 -- Use the installed Poseidon pool; the room fixture bans non-core fill traits.
@@ -112,7 +114,7 @@ local function makeGame()
   return game, session
 end
 
-if arg[2] == "grant" then
+if arg[2] == "grant" or arg[2] == "unit-grant" then
   local name = "PoseidonWeaponBoon"
   stock.TraitSetData = {}
   stock.LootData.TrialUpgrade = { PermanentTraits = {} }
@@ -137,6 +139,50 @@ if arg[2] == "grant" then
   item.Rarity = "Epic"
   local repeated, retained = game:SelectBoon(1, 1, 3, name)
   assert(token == repeated and retained.Rarity == "Rare" and game:BoundGuestUnit(3) == other)
+
+  if arg[2] == "unit-grant" then
+    local reward = game.roomLoad.boonOffer.reward
+    local entry = reward.seats[3]
+    stock.GameState = { TraitsTaken = {} }
+    local hostTrait = { Name = name, Slot = "Melee", Rarity = "Common", StackNum = 2, Id = "host-owned" }
+    host.Traits[1], host.TraitDictionary[name] = hostTrait, { hostTrait }
+    local function commit()
+      return game:GrantGuestBoon(1, 1, 3, token)
+    end
+    assert(not game:GrantGuestBoon(1, 1, 2, token))
+    units[3] = guest
+    assert(not commit() and entry.pending == token and #other.Traits == 0)
+    units[3] = other
+
+    -- Refuse at the real receipt boundary after insertion. Retry must see a
+    -- completely unoccupied Unit, even if SlottedTraits did not exist before.
+    local oldSlots = other.SlottedTraits
+    reward.seats[2].instanceId = "h2t/1/1/3/" .. other.ObjectId
+    local failed, reason = commit()
+    assert(not failed and reason == "grant not confirmed" and entry.pending == token and not entry.consumed)
+    assert(#other.Traits == 0 and not other.TraitDictionary[name] and other.SlottedTraits == oldSlots)
+    reward.seats[2].instanceId = nil
+
+    local id = assert(commit())
+    local added = assert(other.Traits[1])
+    assert(added.Name == name and added.Rarity == "Rare" and added.Id == id and added ~= hostTrait)
+    assert(added.RarityMultiplier == 1.25 and added.OnEnemyDamagedAction.Args.DamageMultiplier == 1.25)
+    assert(other.TraitDictionary[name][1] == added and other.SlottedTraits.Melee == name)
+    assert(stock.GetTraitCount(other, { TraitData = added }) == 1 and stock.GetTotalTraitCount(other) == 1)
+    assert(commit() == id and #other.Traits == 1 and #other.TraitDictionary[name] == 1)
+    assert(not game:GrantGuestBoon(1, 1, 3, { seat = 3 }))
+    assert(host.Traits[1] == hostTrait and #host.Traits == 1 and host.TraitDictionary[name][1] == hostTrait
+      and hostTrait.Rarity == "Common" and hostTrait.StackNum == 2 and not stock.GameState.TraitsTaken[name])
+    assert(entry.consumed == name and entry.rarity == added.Rarity and entry.instanceId == added.Id)
+    local claims = game:ReadActors().room.rewards[1].claims
+    for _, claim in ipairs(claims) do
+      assert((claim.state == "consumed") == (claim.playerId == 3))
+    end
+    assert(claims[#claims].playerId == 3 and claims[#claims].choice == name)
+    print("bound guest " .. other.ObjectId .. " granted " .. name .. " Rare x1, id=" .. id
+      .. "; stale binding refused, failed confirmation rolled back, retry returned the same ID")
+    return
+  end
 
   -- The engine supplies base damage for the tooltip and a random suffix for
   -- the stock instance ID. Neither leaf supplies the trait or its rarity.
