@@ -43,6 +43,7 @@ try {
         '/UseDevSaves=true',('/DevSavePathStr="' + $profilePath + '"'),'/AllowControlHotSwap=false',
         '/AutoAdvanceNarration=true','/DirectLoad=F_Combat02','/DirectLoadShell=false')
     $observer = Start-Process $lua -ArgumentList ('"'+$root+'/observe.lua" "'+$root+'"') -PassThru -WindowStyle Hidden -RedirectStandardError "$root/observer.err"
+    $null = $observer.Handle
     # The authority renders stock menu input from the hero's player connection.
     $game = Start-Process "$ship/Hades2.exe" -WorkingDirectory $ship -ArgumentList $options -PassThru
     $null = $game.Handle
@@ -50,6 +51,7 @@ try {
     # This console takes ffmpeg's q after the players finish choosing.
     $recorder = Start-Process powershell.exe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',
         ('"'+$root+'/record.ps1"'),'-GamePid',$game.Id,'-RunRoot',('"'+$root+'"')) -PassThru
+    $null = $recorder.Handle
     $game.WaitForExit()
     Record "game_exit=$($game.ExitCode)"
 } finally {
