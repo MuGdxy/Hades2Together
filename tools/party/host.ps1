@@ -7,7 +7,7 @@ $log = "$ship/ReturnOfModding/LogOutput.log"
 if ((Test-Path "$root/run-output.txt") -or (Test-Path $log) -or (Get-Process Hades2 -ErrorAction SilentlyContinue)) {
     throw 'A game or previous run exists'
 }
-if ((Get-FileHash "$ship/d3d12.dll").Hash -ne '020AE1867BD4D7521BCA9B6013AE06620454F7623CDFC8F3C55E49848282EEF9') { throw 'Unexpected loader' }
+if ((Get-FileHash "$ship/d3d12.dll").Hash -ne 'F59A2C62CAD30B1E76BE7E8DE39ED83376C9792942D6CA707DFE60AD895339F5') { throw 'Unexpected loader' }
 $realSaves = Join-Path $env:USERPROFILE 'Saved Games/Hades II'
 function SavedProfiles { Get-ChildItem $realSaves -File -Filter 'Profile*.sav' | Sort-Object Name | ForEach-Object { $_.Name + ' ' + (Get-FileHash $_.FullName).Hash } }
 $before = @(SavedProfiles)

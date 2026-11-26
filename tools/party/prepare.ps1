@@ -11,7 +11,7 @@ $repo = (Get-Item "$PSScriptRoot/../..").FullName
 $source = (Get-Item -LiteralPath $SourceStage).FullName
 if ($Address.AddressFamily -ne 'InterNetwork') { throw 'Expected the host LAN IPv4 address' }
 if (!$PlayerLoader) { $PlayerLoader = "$source/Ship/d3d12.dll" }
-if ((Get-FileHash -LiteralPath $PlayerLoader).Hash -ne '020AE1867BD4D7521BCA9B6013AE06620454F7623CDFC8F3C55E49848282EEF9') { throw 'Expected the reviewed host Use loader' }
+if ((Get-FileHash -LiteralPath $PlayerLoader).Hash -ne 'F59A2C62CAD30B1E76BE7E8DE39ED83376C9792942D6CA707DFE60AD895339F5') { throw 'Expected the party-team loader' }
 if ((Get-FileHash $CaptureHelper).Hash -ne '5557FB8BBF37421F9202C27AC783ECCAD88AF588CE08824BE4354EED95B28B83') { throw 'Unexpected game-window recorder' }
 if (Test-Path -LiteralPath $Out) { throw 'Use a fresh output directory' }
 $root = (New-Item -ItemType Directory -Path $Out).FullName

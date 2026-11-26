@@ -8,7 +8,7 @@
 
 ```powershell
 $party = Join-Path $env:AGENT_SERVER_TMP 'h2t-party-session'
-./tools/party/prepare.ps1 -SourceStage "$env:AGENT_SERVER_TMP/h2t-14aea73-guest-staff-live" -Out $party -Address 127.0.0.1 -PlayerLoader "$env:AGENT_SERVER_TMP/player-cli-use-build/d3d12.dll" -CaptureHelper "$env:AGENT_SERVER_TMP/seat-owner/same-brawler-align/capture-secondary-scene.ps1"
+./tools/party/prepare.ps1 -SourceStage "$env:AGENT_SERVER_TMP/h2t-14aea73-guest-staff-live" -Out $party -Address 127.0.0.1 -PlayerLoader "$env:AGENT_SERVER_TMP/party-team-build/d3d12.dll" -CaptureHelper "$env:AGENT_SERVER_TMP/seat-owner/same-brawler-align/capture-secondary-scene.ps1"
 ```
 
 权威机使用 Windows 零售版、Hell2Modding 1.0.125、LuaENVY 1.2.1 和支持首席 V1 `Use` 的加载器。准备器和运行器核对 DLL 哈希。启动时保持实体手柄断开，让原版识别固定虚拟通道。采集使用现有精确窗口 FFmpeg 工具。在私有 `F_Combat02` 定义中指定普通波塞冬掉落，原版遭遇生成敌群，清场后调用 `SpawnRoomReward`。每人的候选取自本席实际机会。

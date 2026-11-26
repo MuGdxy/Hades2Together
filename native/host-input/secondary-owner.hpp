@@ -33,6 +33,30 @@ class RoomGuest {
         return Slots::current() == tables_ && tables_.primary(host_id_) == primary_ &&
             read<Addr>(primary_.unit + 0x658) == primary_.player;
     }
+    const char* join_host_team() const noexcept {
+        // Unit::Init copies UnitData into storage allocated by each Unit's constructor.
+        const auto data = read<Addr>(unit_ + 0x668).value_or(0);
+        const auto host_data = read<Addr>(primary_.unit + 0x668).value_or(0);
+        if (!data || !host_data || data == host_data) return "guest has no private UnitData";
+
+        // Use the same named property and absolute setter as ScriptAction::SetUnitProperty.
+        struct Property { std::uint64_t type; Addr address; std::uint64_t flags; } property{};
+        struct Value { std::uint64_t type; std::uint64_t payload[3]; };
+        using Lookup = Property* (*)(Property*, Addr, const char*);
+        using Set = bool (*)(const Property*, const Value*, std::uint8_t);
+        using SameTeam = bool (*)(Addr, Addr);
+        const auto lookup = reinterpret_cast<Lookup>(game_base + 0xe49b0);
+        if (lookup(&property, data + 0x18, "FriendlyToPlayer") != &property ||
+            static_cast<std::uint8_t>(property.type) != 1 || property.address != data + 0x7b)
+            return "stock FriendlyToPlayer property unavailable";
+        const Value enabled{1, {1, 0, 0}};
+        if (!reinterpret_cast<Set>(game_base + 0x1beff0)(&property, &enabled, 0) ||
+            read<std::uint8_t>(property.address) != 1) return "stock FriendlyToPlayer not applied";
+        const auto same_team = reinterpret_cast<SameTeam>(game_base + 0x2ae260);
+        if (!same_team(unit_, primary_.unit) || !same_team(primary_.unit, unit_))
+            return "stock Unit::HasSameTeam rejected guest";
+        return nullptr;
+    }
     bool inactive_vacant(int id) const noexcept {
         struct Iterator { Addr node, info; } it{};
         using Find = Iterator* (*)(Addr, Iterator*, const int*);
@@ -261,6 +285,7 @@ public:
             if (!unit_ || !selected_ || generated_ != unit_ || read<Addr>(unit_+0x658)!=chosen_ ||
                 world_object(tables_.world,id_)!=unit_ || unit_object(id_)!=unit_ || !host_matches() || closing_)
                 return "original Unit creation incomplete";
+            if (const char* failure = join_host_team()) return failure;
             const auto handler = read<Addr>(tables_.handlers+lane_*sizeof(Addr));
             const auto cursor = read<Addr>(game_base+0x831910+lane_*sizeof(Addr));
             if (!handler || !cursor || (*handler ? *cursor!=*handler+0x20 : *cursor!=0))
