@@ -76,6 +76,17 @@ python tests/net_smoke.py --lua lua --stock-room
 
 ### 访客触发普通波塞冬祝福时的受益角色
 
+**访客候选的数据边界（安装版 143476）。** 正式绑定 `Game:EnsureGuestActor` 已能取得原版创建并附在该 Unit 上的独立角色表。`GetTotalTraitCount(unit)` 可读取该角色的特质数。普通 `PoseidonWeaponBoon` 属于波塞冬掉落的五个优先候选之一（`LootData_Poseidon.lua:34–43`）。有空的近战槽只是进入候选池的条件；最终清单还取决于原版优先抽取、补位和数量限制。
+
+可用 `texlua tests/stock_guest_boon_source.lua "<游戏目录>/Content/Scripts"` 单独验证选项来源。夹具用原版 `CreateNewHero` 创建两个 Lua 角色，只有访客持有该祝福、占近战槽并带有限选特质。用三个优先项排除随机裁剪后，原版 `SetTraitsOnLoot(loot, { Unit = guest })` 仍列出该访客已有的祝福，`CalcNumLootChoices` 仍返回宿主的 3。具体读取如下：
+
+- `GetPriorityTraits` 从 `CurrentRun.Hero.Traits` 建立占槽表，用 `HeroHasTrait` 查宿主字典。`IsTraitEligible` 的数量上限检查也向宿主取数。按名称调用 `GetTraitCount(guest, ...)` 会触发仅限当前英雄的调试断言；断言不终止时读到的仍是宿主的层数。见 `UpgradeChoiceLogic.lua:739–778`、`RunLogic.lua:99–129`、`TraitLogic.lua:496–512, 541–557`。
+- `GetHeroTraitValues(key, { Unit = guest })` 能遍历访客，但普通查询的缓存命中和填充都使用宿主的 `HeroTraitValuesCache`。回放中一次访客查询写入宿主缓存，随后宿主查询也返回该值。`HasHeroTraitValue` 则直接遍历宿主，是 `CalcNumLootChoices` 检查限选的来源。见 `TraitLogic.lua:398–428, 1746–1754`。
+
+建议的最小接口是模组适配层的 `resolveOrdinaryBoonOptions(offer, unit)`。输入取该机会的原始掉落配置和已绑定的受益 Unit；占槽、已持有特质、限选、稀有度加成及其缓存均按该 Unit 读取，房间条件和本局禁用列表沿用权威世界。结果按机会、角色和本轮重掷保存，交给现有 `Boon.setOptions`。读取快照只取已裁定的结果。
+
+具体需要决定的是访客抽取使用哪条随机序列。原版对一个物件写一次 `loot.UpgradeOptions`；优先池裁剪与封锁都调用未传 RNG 的 `RemoveRandomValue`，会消耗游戏的全局随机序列（`UpgradeChoiceLogic.lua:157–162, 774–779`、`UtilityLogic.lua:1094–1119`）。给访客再抽一次会推进后续原版随机结果。若要求保留宿主序列，则需为该机会的访客抽取显式传入权威管理的独立 RNG。两种策略都要保留宿主已经生成的掉落和限选结果。决定前，访客候选保持未知；本次回放没有执行授予。
+
 安装版的 `OnUsed` 从 `triggerArgs.UserTable` 取得交互者，将其传给 `UseLoot(usee, args, user)`。正常通过检查后，`UseLoot` 调用 `HandleLootPickup(CurrentRun, usee, args)`，在这里丢失了独立的 `user` 参数。后者调用 `OpenUpgradeChoiceMenu(loot, args)`。见 `InteractLogic.lua:303–343, 621–676, 693–733`。
 
 选项构建时，`CreateUpgradeChoiceButton` 明确以 `CurrentRun.Hero` 生成特质数据。普通新增分支在 `HandleUpgradeChoiceSelection` 调用 `AddTraitToHero`，最终执行 `AddTraitData(CurrentRun.Hero, traitData, args)`。正式二席绑定能取得真实访客 Unit、向对应 handler 提交输入；选择和授予函数没有使用该绑定来决定受益角色。见 `UpgradeChoiceLogic.lua:294, 940–974`、`TraitLogic.lua:471–493` 和 `native/host-input/observe-sampler-lua.hpp`。
