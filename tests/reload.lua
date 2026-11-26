@@ -402,19 +402,27 @@ return function(root, test, eq)
     eq(held.buttons, 9)
     eq(release.buttons, 0)
     eq(release.seq, 2)
+
+    mod:queue("player remove 1\ninput 1 1 0\nplayer add Player\ninput 1 0 0\n")
+    local rejoined = mod:poll(0.03125)
+    assert(rejoined:find("OK offline 1 Player\nERR input seat 1 is disconnected\nOK rejoined 1 Player\nOK input 1", 1, true), rejoined)
+    eq(#mod.inputs, 3)
+    eq(mod.inputs[3].frame.seq, 3)
+    eq(mod.inputs[3].frame.moveX, 0)
+
     mod:setInputs("1 2 0 1\n1 0 1 1\n")
     mod:queue("play\n")
-    mod:poll(0.03125)
-    eq(#mod.inputs, 3)
-    local playback = mod.inputs[3].frame
-    eq(playback.tick, 2)
-    eq(playback.seq, 3)
+    mod:poll(0.0625)
+    eq(#mod.inputs, 4)
+    local playback = mod.inputs[4].frame
+    eq(playback.tick, 3)
+    eq(playback.seq, 4)
     eq(playback.moveX, 0)
     eq(playback.moveY, 1)
     eq(playback.buttons, 0)
   end)
 
-  test("host sampler binds neutral, submits canonical frames and revokes on seat replacement", function()
+  test("host sampler binds neutral, submits canonical frames and revokes on disconnect", function()
     local mod = mockLoader(root)
     mod.game.CurrentRun = { CurrentRoom = { Name = "Room" }, Hero = { ObjectId = 91 } }
     mod.game.SessionState = { MapLoads = 7 }
@@ -457,7 +465,9 @@ return function(root, test, eq)
     for i, value in ipairs({7, 2, 0.8, 0, 0, 0, 2}) do eq(submitted[1][i], value) end
     mod.game.IsInputAllowed = function() return false end
     mod:queue("input 1 0 0\nplayer remove 1\nplayer add Other\ninput 1 1 0\n")
-    assert(mod:poll(0.06):find("ERR input unsupported host owner changed", 1, true))
+    local offline = mod:poll(0.06)
+    assert(offline:find("OK offline 1 Player\nOK joined 3 Other\nERR input seat 1 is disconnected", 1, true), offline)
+    assert(mod:poll(0.08):find("hostInput=host owner changed", 1, true))
     for i, value in ipairs({7, 4, 0, 0, 0, 0, 0}) do eq(submitted[2][i], value) end
     eq(#submitted, 2)
     eq(table.concat(calls, ","), "install,arm,bind,connect,clear,revoke")

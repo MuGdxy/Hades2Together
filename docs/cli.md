@@ -28,6 +28,8 @@
 
 `player add` 不写名字时，名字从 `Fake1` 开始递增。本地玩家启动时占 1 号席，名字来自 `playerName`。
 
+`player remove <席位或名字>` 将玩家标记为离线，返回 `OK offline`，在本会话内保留原席。用 `player add` 加原名可回到同一席位。其他名字不能占用该席位，离线席位的输入会被拒绝。
+
 `enter` 默认请求 `F_Test`，也接受 `enter F_Combat01`。游戏处理请求时会检查地图文件和 `/AllowSaveLoad=false`。已经在请求的房间时，`enter=ready` 会确认房间和英雄，无需再次加载。Steam v1.143476 没有 `F_Test.map_text`，因此请使用 `F_Combat01`。原因见 [当前卡点](blockers.md)。
 
 ## 从 PowerShell 启动测试房间
