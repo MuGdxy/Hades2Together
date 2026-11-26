@@ -100,8 +100,10 @@ do
   game.SessionState = { MapLoads = 7 }
   game.GetConfigOptionValue = function() return false end
   game.IsInputAllowed = function() return true end
-  game.HeroData = { DefaultWeapon = "staff" }
-  game.CreateNewHero = function() return {} end
+  game.HeroData = { DefaultWeapon = "WeaponStaffSwing" }
+  game.WeaponSets = { HeroWeaponSets = { WeaponStaffSwing = {
+    "WeaponStaffSwing2", "WeaponStaffSwing3", "WeaponStaffSwing5", "WeaponStaffBall", "WeaponStaffDash" } } }
+  game.CreateNewHero = function(_, args) return { Weapons={ [args.WeaponName]=true } } end
   game.AttachLua = function(args) assert(args.Id == 900) actor = args.Table end
   environment.rom.data = {
     h2t_active_submit = function() error("unexpected primary sample") end,
@@ -124,6 +126,16 @@ do
     end,
   }
   local Guest = environment.import("hack/guest_input.lua")
+  local equips, capacity = {}, false
+  environment.rom.data.h2t_guest_equip_staff = function(seat, load, publication, id, linked)
+    local unit = assert(controller:BoundGuestUnit(seat))
+    assert(unit.ObjectId == id and load == game.SessionState.MapLoads and publication == controller.guestInputs[seat].publication)
+    assert(linked == game.WeaponSets.HeroWeaponSets.WeaponStaffSwing)
+    if not capacity then return "insufficient stock gun capacity" end
+    assert(not equips[unit], "equipped the same publication twice")
+    equips[unit] = true
+    return "equipped"
+  end
   local function update() Guest.update(controller, environment.rom.data) end
   local function send() return controller:SubmitInput(1, 2, { moveX = 0.5 }) end
   update()
@@ -131,6 +143,11 @@ do
   clear = true
   update()
   assert(send())
+  local accepted, detail = controller:SubmitInput(1, 2, { buttons=2 })
+  assert(not accepted and detail:find("insufficient stock gun capacity", 1, true))
+  assert(controller:SubmitInput(1, 2, { buttons=0 }))
+  capacity = true
+  assert(controller:SubmitInput(1, 2, { buttons=2 }) and equips[actor])
   Session.release(session, 2)
   controller:Step(0, 1)
   update()
@@ -221,6 +238,7 @@ do
   controller:UpdateInputOwner()
   controller:UpdateInputOwner()
   assert(published and actor ~= oldActor and controller:BindHero(2) == 900)
+  assert(equips[actor] and equips[oldActor])
   actor.Health, actor.MaxHealth = 30, 30
   assert(controller:ReadActors().heroes[2].hp == 30)
   assert(controller:BodyReport():find("load=8 publication=13", 1, true))
@@ -268,9 +286,11 @@ do
   end
   native.h2t_guest_clear = function(pub, token, seat) return pub==14 and token==1 and seat==5 end
   local samples = {}
-  native.h2t_guest_submit = function(load, pub, token, seq, x, _, _, _, _, seat)
+  local masks = {}
+  native.h2t_guest_submit = function(load, pub, token, seq, x, _, _, _, buttons, seat)
     assert(load==8 and pub==14 and token==1 and seat==5 and seq==#samples+1)
     samples[seq] = x
+    masks[seq] = buttons
     return true
   end
   local script = environment.import("dev/inputs.lua").parse("5 0.5 0 0.001", Session.capacity(session))
@@ -283,6 +303,8 @@ do
   controller:Step(0.05, 3)
   assert(not controller.playing and samples[2]==0)
   assert(controller:BindHero(2)==900 and controller:ReadActors().heroes[3].id==905)
+  assert(equips[fifth] and controller:SubmitInput(4, 5, { buttons=2 }) and controller:SubmitInput(5, 5, { buttons=0 }))
+  assert(masks[3]==2 and masks[4]==0)
   names[905], alive[905] = nil,nil
   game.CurrentRun.CurrentRoom = oldRoom
   names[900], alive[900] = nil, nil

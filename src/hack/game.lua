@@ -513,6 +513,25 @@ function Game:GuestSpawnPoint(hero, joining)
   end
 end
 
+function Game:EquipGuestStaff(state)
+  local g, native = rom.game, state.native
+  if not native or not native.h2t_guest_equip_staff then return "guest weapon binding unavailable" end
+  local actor = self:BoundGuestUnit(state.seatId)
+  if not actor or not actor.Weapons or not actor.Weapons.WeaponStaffSwing then return "guest has no default staff" end
+  local sets = g.WeaponSets and g.WeaponSets.HeroWeaponSets
+  if not sets or not sets.WeaponStaffSwing then return "stock staff set unavailable" end
+  local function equip()
+    return native.h2t_guest_equip_staff(state.seatId, state.load, state.publication, actor.ObjectId, sets.WeaponStaffSwing)
+  end
+  local status = equip()
+  if status == "staff package not loaded" then
+    g.LoadPackages({ Name="WeaponStaffSwing", IgnoreAssert=true })
+    if self:BoundGuestUnit(state.seatId) ~= actor then return "guest weapon owner changed" end
+    status = equip()
+  end
+  return status
+end
+
 -- The original Thing destructor releases its attached Lua registry reference.
 -- CreateNewHero's explicit weapon argument initializes this table locally.
 function Game:EnsureGuestActor(state)
@@ -759,7 +778,8 @@ function Game:BodyReport()
       local receipt = guest.sequence and (" appliedSeq=" .. guest.sequence) or ""
       local idle = not slot.connected and guest.offlineBatch and (" offlineBatch=" .. guest.offlineBatch) or ""
       local binding = guest.id and (" load=" .. guest.load .. " publication=" .. guest.publication) or ""
-      parts[#parts + 1] = playerId .. ":" .. slot.name .. ":" .. (guest.reason or "pending") .. position .. receipt .. idle .. binding
+      local staff = guest.id and guest.staffStatus and (" staff=" .. guest.staffStatus) or ""
+      parts[#parts + 1] = playerId .. ":" .. slot.name .. ":" .. (guest.reason or "pending") .. position .. receipt .. idle .. binding .. staff
     elseif slot and slot.connected then
       local pending = GuestInput.supports(rom.data, playerId)
       parts[#parts + 1] = playerId .. ":" .. slot.name .. (pending and ":awaiting room owner" or ":unsupported")

@@ -1,5 +1,6 @@
 -- The room owns the actor. Only the input connection follows roster changes.
 local Guest = {}
+local Actions = import("protocol/actions.lua")
 
 function Guest.states(game)
   if not game.guestInputs then
@@ -40,6 +41,13 @@ function Guest.seats(hostSeat, slots, retained)
   end
   table.sort(ids)
   return ids
+end
+
+local function checkStaff(game, state)
+  local ok, result = pcall(game.EquipGuestStaff, game, state)
+  state.staffStatus = ok and result or ("guest staff setup failed: " .. tostring(result))
+  state.staffPublication = state.publication
+  return state.staffStatus == "equipped"
 end
 
 local function sync(state, slot)
@@ -132,6 +140,7 @@ local function updateSeat(game, native, seat)
     state.ready, state.reason = false, reason or "waiting for original attached hero table"
     return
   end
+  if state.staffPublication ~= state.publication or not state.staffStatus then checkStaff(game, state) end
   if not result.inputBound then
     state.token, state.ready, state.sequence = nil, false, nil
     state.reason = "waiting for original handler"
@@ -173,6 +182,9 @@ function Guest.submit(game, frame)
   if frame.aimX ~= 0 or frame.aimY ~= 0 or frame.buttons > 3 then return false, "unsupported secondary input" end
   if (frame.buttons ~= 0 or frame.moveX ~= 0 or frame.moveY ~= 0) and not game:InputAllowed() then
     return false, "stock input blocked"
+  end
+  if frame.buttons >= Actions.bit("Attack2") and state.staffStatus ~= "equipped" and not checkStaff(game, state) then
+    return false, state.staffStatus
   end
   if not call(state.native, seat, "h2t_guest_submit", load, state.publication, state.token, frame.seq, frame.moveX, frame.moveY,
       frame.aimX, frame.aimY, frame.buttons) then return false, "secondary sample refused" end

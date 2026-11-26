@@ -14,6 +14,10 @@
 
 每个已绑定的席位支持移动两轴、`Attack1`、`Attack2` 和显式零，瞄准轴须为零。每份输入的租约上限为 500 毫秒。`input` 使用名册中的逻辑席号；例如会话容量至少为五时，脚本可只声明 `name 5 Fifth` 并向 5 号席发送移动，2–4 号席保持空缺。用 `status` 查看该席的实际角色 ID、就绪状态和回执。加载器可分配的物理通道数与会话容量分别计算。未取得原生通道的席位会显示原因。
 
-协议 V1 的唯一运行时动作表是 [src/protocol/actions.lua](../src/protocol/actions.lua)。位值依次为 `Attack1=1`、`Attack2=2`、`Attack3=4`、`Rush=8`、`Use=16`、`Shout=32`、`Select=64`、`Cancel=128`。这些名字在 Steam v1.143476 安装目录的 `Content/Scripts/MetaUpgradeCardUpgradeScreenLogic.lua` 中作为控制名出现。当前本机读回仍只采样数字方向与 `Attack1`。瞄准轴及未采集的轴用零表示，连续硬件轴读回和菜单执行有待验证。
+访客首次绑定到本房的 Unit 后，适配器用原版 `EquipWeapon` 装备默认法杖和关联武器。该席的 `staff=equipped` 表示六个原生武器实例均已从该角色的武器库读回。换房后对新 Unit 执行同一流程。同房重连复用已装备的角色。若加载器缺少装备接口或原版武器池容量不足，状态会显示原因，移动和显式零仍可使用。
+
+安装版 `PlayerWeapons.sjson` 将法杖普攻 `WeaponStaffSwing` 绑定到 `Attack2`。可通过普通 `input <席号> 0 0 Attack2` 提交，原版采样后再发 `input <席号> 0 0` 释放。是否实际出招取决于原版蓄力和动作条件。`WeaponStaffBall` 的控制为 `Attack3`，当前原生输入适配器尚未接入该键。
+
+协议 V1 的唯一运行时动作表是 [src/protocol/actions.lua](../src/protocol/actions.lua)。位值依次为 `Attack1=1`、`Attack2=2`、`Attack3=4`、`Rush=8`、`Use=16`、`Shout=32`、`Select=64`、`Cancel=128`。这些名字在 Steam v1.143476 安装目录的 `Content/Scripts/MetaUpgradeCardUpgradeScreenLogic.lua` 中作为控制名出现。本机读回采样数字方向、`Attack1` 和 `Attack2`。瞄准轴及未采集的轴用零表示，连续硬件轴读回和菜单执行有待验证。
 
 客户端通过 `Input.frame` 构造同一种状态。权威按连接检查席位，拒绝未知位、额外字段及重复或倒序序号，再用自己的 tick 提交给 `Engine.PushInput`。本地 `input` 和 `play` 也经 `Input.frame` 提交给该引擎入口。同一席位的本地序号在两种命令间连续。播放文件继续使用 `席位 moveX moveY 秒数` 与可选的 `name 席位 名字`，格式错误或轴值越界的播放行会被跳过。

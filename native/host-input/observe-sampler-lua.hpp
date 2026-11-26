@@ -1,5 +1,6 @@
 #pragma once
 #include "active-sample-runtime.hpp"
+#include "guest-staff.hpp"
 
 namespace h2t_observe_runtime {
 inline const char* name(Install value) noexcept {
@@ -41,6 +42,7 @@ inline void bind(sol::table& ns) {
     });
     // Optional final seat preserves the existing two-seat Lua ABI.
     const auto seat_id=[](sol::optional<std::uint64_t> seat){return seat.value_or(2u);};
+    ns.set_function("h2t_guest_equip_staff", &h2t_players::equip_guest_staff);
     ns.set_function("h2t_guest_capacity", []() {
         const auto slots=h2t_players::Slots::current();
         return slots ? slots->capacity() : 0u;
