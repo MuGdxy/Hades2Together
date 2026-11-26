@@ -30,4 +30,8 @@ $party = Join-Path $env:AGENT_SERVER_TMP 'h2t-party-session'
 
 ## 接口验证
 
-`texlua tests/run.lua` 覆盖正式 play/serve 连接、席位代际和权威回执。`texlua tests/read_actors.lua "<游戏目录>/Content/Scripts"` 加载安装版 Lua，从原版菜单等待输入，经按钮派发、宿主授予，核对同一实际返回实例和 consumed 投影。该回放的原生交互和按钮布局为夹具。四名玩家在同一真实遭遇共战并各自领取仍需一次完整录像和权威记录。
+`texlua tests/run.lua` 覆盖正式 play/serve 连接、席位代际和权威回执。`texlua tests/read_actors.lua "<游戏目录>/Content/Scripts"` 加载安装版 Lua，从原版菜单等待输入，经按钮派发、宿主授予，核对同一实际返回实例和 consumed 投影。该回放的原生交互和按钮布局为夹具。
+
+## 实机结果
+
+`49b3856` 的四个独立 CLI 在一个权威游戏的 `F_Combat02` 中共同清场。原版记录了四席的法杖发射。席 2、3、4 的弹体有敌人受击记录，席 1 的已匹配受击对象是场景可破坏物。席 1 通过自己的连接使用掉落并在原版菜单选择了 `PoseidonSpecialBoon`，另三席各自选择了 `PoseidonWeaponBoon`。权威快照 tick 733 已记录四条 `consumed`，四个角色各持有对应的 Common 祝福一层。该录像在本房领奖后结束。控制页历史条目为 `h2t-party-team-stage`。
