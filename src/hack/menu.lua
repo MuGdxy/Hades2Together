@@ -69,6 +69,11 @@ local function preparePlayback(session, text)
 end
 
 function Menu.pump(control, game)
+  -- A retained pre-seat-snapshot script cannot identify its original connections.
+  if game.playing and not game.playbackSeats then
+    game.playing = false
+    game.playResult = "legacy playback stopped on reload; run play to restart"
+  end
   game:UpdateInputOwner()
   local console = control.console
   local tick = (control.inputTick or 0) + 1

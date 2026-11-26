@@ -467,7 +467,7 @@ return function(root, test, eq)
     mod.game.GameState = { IllegalConversationModification = true }
     local gameSource, replacements = readSource(root, "hack/game.lua")
       :gsub("function Game:PushInput%(playerId, frame%).-\nend",
-        "function Game:PushInput(playerId, frame)\n  return captureInput(playerId, frame)\nend")
+        "function Game:PushInput(playerId, frame)\n  captureObservedGame(self)\n  return captureInput(playerId, frame)\nend")
     eq(replacements, 1)
     mod.edits["hack/game.lua"] = gameSource
     mod:reload()
@@ -521,6 +521,22 @@ return function(root, test, eq)
     onMap({ name = "NewRoom" })
     local changedMap = mod:poll(0.125)
     assert(changedMap:find("map=NewRoom-updated", 1, true), changedMap)
+    -- An older plugin retained the active script and clock, but no connection snapshot.
+    local retained = mod.observedGame
+    assert(retained.playing and retained.playTime > 0)
+    retained.playbackSeats, retained.playStarted = nil, nil
+    local sent = #mod.inputs
+    mod:queue("player remove Guest\nplayer add Guest\n")
+    mod:reload()
+    local migrated = mod:poll(0.15)
+    assert(migrated:find("OK rejoined 2 Guest", 1, true), migrated)
+    eq(retained.session.slots[2].connectionGeneration, 2)
+    eq(#mod.inputs, sent)
+    eq(retained.playing, false)
+    mod:queue("play\n")
+    mod:poll(0.18)
+    eq(#mod.inputs, sent + 1)
+    eq(mod.inputs[sent + 1].seat, 2)
     eq(#mod.warnings, 0)
   end)
 

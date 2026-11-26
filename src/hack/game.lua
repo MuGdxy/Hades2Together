@@ -517,7 +517,6 @@ function Game:Step(dt, tick)
     return
   end
 
-  self.playbackSeats = self.playbackSeats or playbackSeats(self.session, self.script)
   if not self.playStarted then
     -- Menu may have just reserved a new logical seat. Start its script clock
     -- only once the original owner has completed the neutral handshake.
