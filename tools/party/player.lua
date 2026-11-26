@@ -20,7 +20,10 @@ local function report(line)
   assert(transcript:flush())
 end
 local client = assert(Connection.connect(socket, config.playerPort, config.playerName, config.serverAddress))
-local untilWelcome = socket.gettime() + 4
+report("connected name=" .. config.playerName .. " waiting for seat")
+-- The game opens its listener before loading the room. Network polling runs
+-- on the game thread and can start several seconds after TCP connects.
+local untilWelcome = socket.gettime() + 90
 local offset, partial, reason = 0, ""
 
 local function command(line)
@@ -60,6 +63,11 @@ while true do
     elseif event.kind == "error" then
       reason = event.msg.reason
       report("ERR authority " .. reason)
+      if not client.playerId then
+        client:close()
+        transcript:close()
+        error(reason, 0)
+      end
     end
   end
   assert(not failure, reason or failure)
