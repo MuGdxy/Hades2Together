@@ -37,3 +37,31 @@ python tests/net_smoke.py --lua texlua
 外部进程通过 `Client.connect(socket, port, name)` 和 `Client:poll()` 接收完整状态，最多四个观察席。同名断开重连沿用席位，并从下一份完整快照恢复。观察模式使用 `Game:ReadActors()`，输入消息会被拒绝，游戏内的 CLI 动作队列暂停处理。实机验证观察到一个原生英雄和原版遭遇；观察席仅用于网络连接。
 
 从仓库根目录运行 `texlua tests/observer.lua` 检查只读传输、输入拒绝和重连。房间及门的读取范围和实机证据见 [实机只读投影](room-rewards.md#实机只读投影)。
+
+## 在权威 CLI 上订阅快照
+
+在游戏插件的 `config.lua` 中保留 `observerSnapshots = false`，设置 `cliSnapshots = true` 并重启。适用于 `serve` 和 `serve+play`，默认关闭。CLI 每次游戏更新照常处理命令并更新控制页。同一个 `Game` 实例在处理命令后提供约 20 Hz 的完整只读快照。监听仍使用 `127.0.0.1:port`。连接的 `welcome` 编号只用于订阅会话，订阅者不会进入 CLI 玩家名册，发送的输入会被拒绝。仅观察模式下仍由 `observerSnapshots` 管理状态文件和更新回调。
+
+启动权威进程后，可从仓库根目录用已安装 LuaSocket 的 Lua 读取一份快照。若配置了临时端口，将示例端口换成加载器日志报告的端口。
+
+```powershell
+@'
+package.path = "src/?.lua;" .. package.path
+function import(path)
+  return require((path:gsub("%.lua$", ""):gsub("/", ".")))
+end
+local socket = require("socket")
+local client = assert(import("client/connection.lua").connect(socket, 27778, "Reader"))
+local deadline = socket.gettime() + 2
+while not client.snapshot and socket.gettime() < deadline do
+  local _, err = client:poll()
+  assert(not err, err)
+  socket.sleep(0.01)
+end
+local snapshot = assert(client.snapshot, "snapshot timeout")
+client:close()
+print(assert(import("protocol/codec.lua").encode(snapshot)))
+'@ | lua -
+```
+
+`texlua tests/run.lua` 包含 CLI 与 TCP 订阅共存的回归测试，覆盖本地输入、远端输入拒绝、完整快照、热更新和订阅连接保留。

@@ -9,6 +9,7 @@ local active
 local control
 local gameState
 local frameError
+local observerError
 local observer
 local nextSnapshot = 0
 local nextObserverStatus = 0
@@ -34,7 +35,7 @@ local function candidateRuntime()
     ["dev/bridge.lua"] = { "controlRoot", "sync", "statusText" },
     ["dev/console.lua"] = { "new", "execute" },
     ["dev/inputs.lua"] = { "parse", "stick" },
-    ["protocol/session.lua"] = { "new", "join", "count", "drop" },
+    ["protocol/session.lua"] = { "new", "join", "count", "drop", "isAuthority" },
   }
   for path, methods in pairs(required) do
     local module = env.import(path)
@@ -45,6 +46,9 @@ local function candidateRuntime()
   assert(candidate.Game == loaded["hack/game.lua"]
     and candidate.Menu == loaded["hack/menu.lua"]
     and candidate.Session == loaded["protocol/session.lua"], "ready.lua must return Game, Menu and Session")
+  if config.observerSnapshots or config.cliSnapshots then
+    assert(type(candidate.Game.ReadActors) == "function", "hack/game.lua is missing ReadActors")
+  end
   if config.observerSnapshots then
     local ok, status = pcall(envyImport, "dev/observer_status.lua", env)
     if ok and type(status) == "table" and type(status.publish) == "function" then
@@ -64,30 +68,34 @@ local function publishObserverStatus(snapshot)
   end
 end
 
-local function frame()
-  local ok, err
-  if observer then
-    local now = observer.clock()
-    if now < nextSnapshot then
-      return
-    end
-    nextSnapshot = now + 0.05
-    ok, err = pcall(function()
-      local result, failure = observer:step()
-      assert(result, failure)
-      if now >= nextObserverStatus then
-        nextObserverStatus = now + 0.25
-        publishObserverStatus(result.snapshot)
-      end
-    end)
-  elseif not config.observerSnapshots then
-    ok, err = pcall(active.Menu.pump, control, gameState)
-  else
+local function stepObserver()
+  local now = observer.clock()
+  if now < nextSnapshot then
     return
   end
-  if not ok and not frameError then
-    frameError = true
-    rom.log.warning("[Hades2Together] control sync failed: " .. tostring(err))
+  nextSnapshot = now + 0.05
+  local result, failure = observer:step()
+  assert(result, failure)
+  if not control and now >= nextObserverStatus then
+    nextObserverStatus = now + 0.25
+    publishObserverStatus(result.snapshot)
+  end
+end
+
+local function frame()
+  if control then
+    local ok, err = pcall(active.Menu.pump, control, gameState)
+    if not ok and not frameError then
+      frameError = true
+      rom.log.warning("[Hades2Together] control sync failed: " .. tostring(err))
+    end
+  end
+  if observer then
+    local ok, err = pcall(stepObserver)
+    if not ok and not observerError then
+      observerError = true
+      rom.log.warning("[Hades2Together] snapshot sync failed: " .. tostring(err))
+    end
   end
 end
 
@@ -125,7 +133,7 @@ function Reload.load()
       control, gameState = newControl, newGame
     end
     active = candidate
-    frameError = nil
+    frameError, observerError = nil, nil
   else
     rom.log.warning("[Hades2Together] Lua load failed: " .. tostring(candidate))
   end
@@ -135,16 +143,17 @@ function Reload.load()
     rom.gui.add_always_draw_imgui(frame)
   end
   if newGame then
-    if config.observerSnapshots then
-      gameState:Install()
+    gameState:Install()
+    if config.observerSnapshots or (config.cliSnapshots and active.Session.isAuthority(gameState.session)) then
       local started, err = pcall(startObserver)
       if not started then
         rom.log.warning("[Hades2Together] observer startup failed: " .. tostring(err))
       end
+    end
+    if not control then
       publishObserverStatus()
       return
     end
-    gameState:Install()
     active.Menu.publish(control, gameState, "waiting for first game update")
     print("[Hades2Together] status " .. control.statusPath)
     rom.log.info(string.format(
