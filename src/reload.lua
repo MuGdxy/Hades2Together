@@ -36,9 +36,9 @@ local function candidateRuntime()
   local required = {
     ["hack/menu.lua"] = { "new", "pump", "publish" },
     ["hack/game.lua"] = { "new", "Install", "OnMap", "CheckEnter",
-      "Enter", "BeginPlayback", "PushInput", "SubmitInput", "UpdateInputOwner", "Step", "BodyReport", "RoomRewards",
+      "Enter", "BeginPlayback", "PushInput", "SubmitInput", "UpdateInputOwner", "Step", "BodyReport", "RoomRewards", "ReadHeroes",
       "SelectBoon", "GrantGuestBoon", "ClaimGuestBoon", "ObserveTraitGrant", "ApplyGuestSplash" },
-    ["dev/bridge.lua"] = { "controlRoot", "sync", "statusText", "claimLines" },
+    ["dev/bridge.lua"] = { "controlRoot", "sync", "statusText", "claimLines", "actorLine" },
     ["dev/console.lua"] = { "new", "execute" },
     ["dev/inputs.lua"] = { "parse", "stick" },
     ["protocol/session.lua"] = { "new", "join", "count", "drop", "isAuthority" },

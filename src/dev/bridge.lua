@@ -23,6 +23,24 @@ function Bridge.statusText(console)
   return Console.execute(console, "status") .. "\n" .. Console.execute(console, "players") .. "\n"
 end
 
+function Bridge.actorLine(label, actor)
+  local hp = tostring(actor.hp or "?") .. "/" .. tostring(actor.maxHp or "?")
+  local kind = actor.kind and " kind=" .. actor.kind or ""
+  local position = actor.x ~= nil and actor.y ~= nil and (" x=" .. actor.x .. " y=" .. actor.y) or ""
+  local line = label .. " id=" .. actor.id .. " hp=" .. hp .. kind .. position
+  if label ~= "hero" then return line end
+  if actor.playerId then line = line .. " seat=" .. actor.playerId end
+  if actor.connected ~= nil then line = line .. " connected=" .. tostring(actor.connected) end
+  if actor.heldBoons then
+    local values = {}
+    for _, boon in ipairs(actor.heldBoons) do
+      values[#values + 1] = table.concat({ boon.name, boon.rarity, boon.stacks }, ":")
+    end
+    line = line .. " heldBoons=" .. (#values > 0 and table.concat(values, ",") or "none")
+  end
+  return line
+end
+
 function Bridge.claimLines(rewards)
   local lines = {}
   for _, reward in ipairs(rewards or {}) do

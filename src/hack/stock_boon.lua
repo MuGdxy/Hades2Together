@@ -3,8 +3,27 @@
 local Boon = import("gameplay/boon.lua")
 local GuestBoon = import("hack/guest_boon.lua")
 local Session = import("protocol/session.lua")
+local Messages = import("protocol/messages.lua")
 local Stock = {}
 local guestGrantSlots = { PoseidonWeaponBoon = "Melee", PoseidonSpecialBoon = "Secondary" }
+
+function Stock.readHeld(unit)
+  if type(unit.Traits) ~= "table" then return end
+  local held = {}
+  for _, trait in pairs(unit.Traits) do
+    if type(trait) ~= "table" then return end
+    if guestGrantSlots[trait.Name] then
+      -- Retail GetTraitCount(unit, { TraitData = trait }) defaults an unset StackNum to one.
+      local stacks = trait.StackNum
+      if stacks == nil then stacks = 1 end
+      if not Messages.validTick(stacks) or stacks < 1 or type(trait.Rarity) ~= "string"
+        or not trait.Rarity:match("^[%w_]+$") then return end
+      held[#held + 1] = { name = trait.Name, rarity = trait.Rarity, stacks = stacks }
+    end
+  end
+  table.sort(held, function(a, b) return a.name < b.name end)
+  return held
+end
 
 function Stock.guestGrantRound(reward, seat, option)
   local member = reward.guests and reward.guests[seat]

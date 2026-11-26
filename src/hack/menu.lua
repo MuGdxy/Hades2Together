@@ -30,6 +30,8 @@ end
 
 function Menu.publish(control, game, state)
   local claims = Bridge.claimLines(game:RoomRewards())
+  local boundIds = {}
+  local heroes = game:ReadHeroes(boundIds)
   local report = io.open(control.statusPath, "wb")
   if report then
     report:write(Bridge.statusText(control.console))
@@ -38,6 +40,10 @@ function Menu.publish(control, game, state)
       report:write(table.concat(control.results, "\n") .. "\n")
     end
     report:write(game:BodyReport() .. "\n")
+    for _, hero in ipairs(heroes) do report:write(Bridge.actorLine("hero", hero) .. "\n") end
+    for seat in pairs(game.session.slots) do
+      if not boundIds[seat] then report:write("unbound seat=" .. seat .. "\n") end
+    end
     for _, line in ipairs(claims) do report:write(line .. "\n") end
     report:close()
   end

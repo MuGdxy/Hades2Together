@@ -43,6 +43,22 @@ local function records(value, key, fieldType)
   return true
 end
 
+local function validHeroes(heroes, capacity)
+  if not records(heroes, "id", "number") then return false end
+  for _, hero in ipairs(heroes) do
+    if hero.playerId ~= nil and not Session.validSeat(hero.playerId, capacity) then return false end
+    if hero.connected ~= nil and type(hero.connected) ~= "boolean" then return false end
+    if hero.heldBoons ~= nil then
+      if not records(hero.heldBoons, "name", "string") then return false end
+      for _, boon in ipairs(hero.heldBoons) do
+        if not boon.name:match("^[%w_]+$") or type(boon.rarity) ~= "string" or not boon.rarity:match("^[%w_]+$")
+          or not Messages.validTick(boon.stacks) or boon.stacks < 1 then return false end
+      end
+    end
+  end
+  return true
+end
+
 function Client:accept(msg)
   if msg.t == "error" then
     return type(msg.reason) == "string"
@@ -61,7 +77,7 @@ function Client:accept(msg)
     return false
   end
   if msg.t == "snap" and Messages.validTick(msg.tick)
-    and records(msg.heroes, "id", "number") and records(msg.enemies, "id", "number")
+    and validHeroes(msg.heroes, self.maxPlayers) and records(msg.enemies, "id", "number")
     and (msg.room == nil or Room.valid(msg.room, self.maxPlayers)) then
     if self.snapshot and msg.tick <= self.tick then
       return nil

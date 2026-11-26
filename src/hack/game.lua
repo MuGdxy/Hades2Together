@@ -329,18 +329,29 @@ local function readActor(self, unit)
   }
 end
 
-function Game:ReadActors()
-  local actors = { heroes = {}, enemies = {} }
+local function appendHero(game, heroes, unit, seat, slot)
+  local actor = readActor(game, unit)
+  if actor then
+    actor.heldBoons = StockBoon.readHeld(unit)
+    actor.playerId = seat
+    if slot then actor.connected = slot.connected end
+    heroes[#heroes + 1] = actor
+  end
+end
+
+-- The local roster can have a native id pending attachment. Record verified
+-- bindings separately when requested, even if health/position is unavailable.
+function Game:ReadHeroes(boundIds)
+  local heroes = {}
   local game = rom and rom.game
   local run = game and game.CurrentRun
   if type(run) ~= "table" or type(run.CurrentRoom) ~= "table" then
-    return actors
+    return heroes
   end
-  actors.room = readRoom(self, game, run.CurrentRoom)
-  local hero = readActor(self, run.Hero)
-  if hero then
-    actors.heroes[1] = hero
-  end
+  local slots = self.session and self.session.slots
+  local host = slots and slots[self.hostSeat]
+  if boundIds and host and run.Hero then boundIds[self.hostSeat] = run.Hero.ObjectId end
+  appendHero(self, heroes, run.Hero, host and self.hostSeat, host)
 
   local native = rom.data
   local states = GuestInput.states(self)
@@ -355,16 +366,29 @@ function Game:ReadActors()
   end
   for _, seat in ipairs(seats) do
     local state = states[seat]
-    if not state or (state.room == run.CurrentRoom and state.hero == run.Hero) then
+    if self.session and Session.isAuthority(self.session) then
+      if state and state.session == self.session and state.slot == slots[seat] then
+        local unit = self:BoundGuestUnit(seat)
+        if boundIds and unit then boundIds[seat] = unit.ObjectId end
+        appendHero(self, heroes, unit, seat, state.slot)
+      end
+    elseif not state or (state.room == run.CurrentRoom and state.hero == run.Hero) then
       local guest = GuestInput.actor(native, seat)
       if guest and guest.actor and guest.actor.ObjectId == guest.id and game.SessionState
           and guest.load == game.SessionState.MapLoads then
-        local actor = readActor(self, guest.actor)
-        if actor then actors.heroes[#actors.heroes + 1] = actor end
+        appendHero(self, heroes, guest.actor, seat, slots and slots[seat])
       end
     end
   end
+  return heroes
+end
 
+function Game:ReadActors()
+  local actors = { heroes = self:ReadHeroes(), enemies = {} }
+  local game = rom and rom.game
+  local run = game and game.CurrentRun
+  if type(run) ~= "table" or type(run.CurrentRoom) ~= "table" then return actors end
+  actors.room = readRoom(self, game, run.CurrentRoom)
   local activeEnemies = game.ActiveEnemies
   local teamRead, teamIds = gameCall("GetIds", { Name = "EnemyTeam" })
   if type(activeEnemies) ~= "table" or not teamRead or type(teamIds) ~= "table" then

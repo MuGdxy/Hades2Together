@@ -7,6 +7,19 @@ const connectionNames = { connecting: "连接中", joined: "已入席", retrying
 let lastStatus, selectedRun, selectedFile, historyRevision = 0, recordRevision = 0;
 let readOnly = true, refreshing = false;
 
+function fields(line) {
+  return Object.fromEntries([...line.matchAll(/(?:^| )(\w+)=([^ ]*)/g)].map(([, key, value]) => [key, value]));
+}
+
+function heldBoonsText(hero) {
+  if (hero?.heldBoons === undefined) return "状态未提供";
+  if (hero.heldBoons === "none") return "无";
+  return hero.heldBoons.split(",").map((value) => {
+    const [name, rarity, stacks] = value.split(":");
+    return name + "（" + rarity + "，" + stacks + " 层）";
+  }).join("、");
+}
+
 function readStatus(status) {
   const lines = status.split(/\r?\n/);
   const field = (name) => lines.find((line) => line.startsWith(name + "="))?.slice(name.length + 1);
@@ -26,17 +39,21 @@ function readStatus(status) {
   }).filter((guest) => guest.start >= 0).sort((a, b) => a.start - b.start);
   const guestRows = new Map(guests.map(({ player, end }, index) =>
     [player, body.slice(end, guests[index + 1]?.start)]));
-  const claims = lines.filter((line) => line.startsWith("claim reward=")).map((line) =>
-    Object.fromEntries([...line.matchAll(/(?:^| )(\w+)=([^ ]*)/g)].map(([, key, value]) => [key, value])));
+  const claims = lines.filter((line) => line.startsWith("claim reward=")).map(fields);
+  const heroes = lines.filter((line) => line.startsWith("hero id=")).map(fields);
+  const unbound = new Set(lines.filter((line) => line.startsWith("unbound seat=")).map((line) => fields(line).seat));
   const hostInfo = body.slice(0, guests[0]?.start);
   for (const player of players) {
     const guest = guestRows.get(player);
     const isHost = guest === undefined && player.seat === "1" && !rosterLine.startsWith("OK role=serve ");
     const actor = guest?.match(/(?:^| )id=(\d+)(?::x=(-?\d+):y=(-?\d+))?/);
     const info = guest ?? (isHost ? hostInfo : "");
-    const id = actor || (isHost ? host : undefined);
-    player.actor = id?.[1];
-    player.position = id?.[2] === undefined ? undefined : id[2] + ", " + id[3];
+    const id = unbound.has(player.seat) ? undefined : actor || (isHost ? host : undefined);
+    const hero = heroes.find((row) => row.seat === player.seat || (!row.seat && row.id === id?.[1]));
+    player.actor = hero?.id ?? id?.[1];
+    player.position = hero?.x !== undefined ? hero.x + ", " + hero.y :
+      (id?.[2] === undefined ? undefined : id[2] + ", " + id[3]);
+    player.held = unbound.has(player.seat) ? "尚无绑定角色" : heldBoonsText(hero);
     player.applied = info.match(/\bappliedSeq=(\d+)/)?.[1];
     player.offline = info.match(/\bofflineBatch=(\d+)/)?.[1];
     player.load = info.match(/\bload=(\d+)/)?.[1];
@@ -45,7 +62,7 @@ function readStatus(status) {
   }
   return { mode, room: field("room") || map, tick: field("tick"), players, claims,
     connection: field("connection"), seat: field("seat"), sent: field("sentSeq"), reason: field("reason"),
-    actors: lines.filter((line) => /^(hero|enemy) id=/.test(line)),
+    heroes, enemies: lines.filter((line) => line.startsWith("enemy id=")),
     receipts: lines.filter((line) => /^(OK |ERR |claim reward=.* state=consumed )/.test(line) &&
       !/^OK (role=|none$|\d+:)/.test(line)).map((line) => line.replace(
       /^claim reward=(\d+) kind=(\S+) seat=(\d+) state=consumed choice=(.+)$/,
@@ -72,7 +89,7 @@ function renderPlayers(status) {
     for (const [label, value] of [
       ["角色 ID", player.actor], ["位置 X, Y", player.position], ["最近应用序号", player.applied],
       ["离线中立批次", player.offline], ["房间装载", player.load], ["发布代际", player.publication],
-      ["原版输入", player.state]
+      ["原版输入", player.state], ["持有的波塞冬祝福", player.held]
     ]) {
       if (value !== undefined) details.append(node("dt", label), node("dd", value));
     }
@@ -87,9 +104,18 @@ function renderPlayers(status) {
     }
     return card;
   });
-  if (cards.length === 0) {
-    for (const actor of status.actors) cards.push(node("p", actor));
+  for (const hero of status.heroes) {
+    if (status.players.some((player) => player.actor === hero.id)) continue;
+    const card = node("article", "");
+    card.className = "player";
+    card.append(node("h3", (hero.seat ? "席 " + hero.seat + " · " : "") + "角色 " + hero.id));
+    if (hero.connected !== undefined) card.append(node("span", hero.connected === "true" ? "在线" : "离线 · 保留席位"));
+    card.append(node("p", "生命 " + hero.hp + (hero.kind ? " · " + hero.kind : "") +
+      (hero.x === undefined ? "" : " · 位置 " + hero.x + ", " + hero.y)),
+      node("p", "持有的波塞冬祝福：" + heldBoonsText(hero)));
+    cards.push(card);
   }
+  if (!status.players.length) for (const enemy of status.enemies) cards.push(node("p", enemy));
   $("players").replaceChildren(...(cards.length ? cards : [node("p", "当前状态未提供角色或名册。")]));
 }
 

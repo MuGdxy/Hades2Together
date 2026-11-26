@@ -4,10 +4,7 @@ local ObserverStatus = {}
 
 local function actorLines(lines, label, actors)
   for _, actor in ipairs(actors) do
-    local hp = tostring(actor.hp or "?") .. "/" .. tostring(actor.maxHp or "?")
-    local kind = actor.kind and " kind=" .. actor.kind or ""
-    local position = actor.x ~= nil and actor.y ~= nil and (" x=" .. actor.x .. " y=" .. actor.y) or ""
-    lines[#lines + 1] = label .. " id=" .. actor.id .. " hp=" .. hp .. kind .. position
+    lines[#lines + 1] = Bridge.actorLine(label, actor)
   end
 end
 
