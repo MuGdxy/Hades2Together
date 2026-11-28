@@ -1,11 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
-using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Hades2Together.Setup;
@@ -31,28 +29,15 @@ public sealed class OwnedFile
 internal sealed class Package : IDisposable
 {
     private readonly ZipArchive archive;
-    internal IReadOnlyList<OwnedFile> SteamFiles { get; }
     internal IReadOnlyList<OwnedFile> Additions { get; }
     internal OwnedFile Bootstrap { get; }
-    internal long Bytes { get; }
+    internal OwnedFile Loader { get; }
+    internal long ProfileBytes { get; }
     internal string Version { get; }
-    internal IEnumerable<OwnedFile> Files => SteamFiles.Concat(Additions);
 
-    internal Package(Stream catalog, Stream payload, string version)
+    internal Package(Stream payload, string version)
     {
         Version = version;
-        using (var reader = new StreamReader(catalog, Encoding.UTF8))
-        {
-            var files = new List<OwnedFile>();
-            for (var line = reader.ReadLine(); line != null; line = reader.ReadLine())
-            {
-                var columns = line.Split('\t');
-                if (columns.Length != 3 || !(columns[0].StartsWith("Ship/") || columns[0].StartsWith("Content/")))
-                    throw new IOException("Invalid Steam inventory.");
-                files.Add(new OwnedFile { Name = columns[0], Size = long.Parse(columns[1], CultureInfo.InvariantCulture), Hash = columns[2] });
-            }
-            SteamFiles = files;
-        }
         archive = new ZipArchive(payload, ZipArchiveMode.Read);
         try
         {
@@ -67,16 +52,26 @@ internal sealed class Package : IDisposable
                         throw new IOException("Duplicate launcher.");
                     Bootstrap = file;
                 }
+                else if (entry.FullName == "Ship/" + GameSlot.LoaderName)
+                {
+                    if (Loader != null)
+                        throw new IOException("Duplicate game loader.");
+                    Loader = file;
+                }
                 else
                 {
+                    if (entry.FullName != Install.LauncherName &&
+                        !entry.FullName.StartsWith("ReturnOfModding/", StringComparison.Ordinal) &&
+                        !entry.FullName.StartsWith("Notices/", StringComparison.Ordinal))
+                        throw new IOException("Unexpected preview payload: " + entry.FullName);
                     additions.Add(file);
                 }
             }
-            if (Bootstrap == null || !additions.Any(file => file.Name == Install.LauncherName))
-                throw new IOException("Missing preview launcher or bootstrap.");
+            if (Bootstrap == null || Loader == null || !additions.Any(file => file.Name == Install.LauncherName))
+                throw new IOException("Missing preview launcher, bootstrap or game loader.");
             Additions = additions;
-            OwnedFile.Validate(Files.Append(Bootstrap));
-            Bytes = Files.Sum(file => file.Size);
+            OwnedFile.Validate(Additions.Append(Bootstrap).Append(Loader));
+            ProfileBytes = Bootstrap.Size + Additions.Sum(file => file.Size);
         }
         catch
         {
@@ -88,8 +83,7 @@ internal sealed class Package : IDisposable
     internal static Package Embedded()
     {
         var assembly = Assembly.GetExecutingAssembly();
-        return new Package(assembly.GetManifestResourceStream("steam.tsv"),
-            assembly.GetManifestResourceStream("payload.zip"),
+        return new Package(assembly.GetManifestResourceStream("payload.zip"),
             assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion);
     }
 
@@ -111,17 +105,19 @@ internal sealed class Package : IDisposable
 internal static class SteamGame
 {
     internal const string AppId = "1145350";
-    internal static readonly string[] Critical = {
-        "Ship/Hades2.exe", "Ship/Hades2.pdb", "Ship/SDL2.dll",
-        "Content/Scripts/Main.lua", "Content/Maps/F_Combat02.map_text"
+    internal static readonly OwnedFile[] Pins = {
+        new OwnedFile { Name = "Ship/Hades2.exe", Size = 6432432, Hash = "A6BE16E91683E6FE3E566C5D68C1DCF8992BAB9126B856606D57B7115E9C30DC" },
+        new OwnedFile { Name = "Ship/Hades2.pdb", Size = 37187584, Hash = "DFEBC6219DEAAAA1D96DC03FE2866D14CA621E1836F685FF40E989C81D577EA7" },
+        new OwnedFile { Name = "Ship/SDL2.dll", Size = 1576448, Hash = "7457CC5C885505B7EBF9C05AD57881468C3DBBA551B3DF8E18CE5D31A09F6A2C" },
+        new OwnedFile { Name = "Content/Scripts/Main.lua", Size = 15946, Hash = "CC64A8D7838CF60198D20E8D3C33D7B7792430BC4D86E700CA54925D122D236C" },
+        new OwnedFile { Name = "Content/Maps/F_Combat02.map_text", Size = 11829, Hash = "42B5E48375FFDB3C858FCBE61F6C8EE4AF1B96AA98F747387131B794AD8D4970" }
     };
 
-    internal static void Check(string root, IEnumerable<OwnedFile> files, Action<string> progress)
+    internal static void Check(string root, IEnumerable<OwnedFile> files)
     {
         using var guard = new Paths(root);
         foreach (var file in files)
         {
-            progress?.Invoke(file.Name);
             if (!Matches(root, file, strict: false))
                 throw new IOException(Texts.Choose("Steam 文件缺失、被重定向或与支持版本不符：",
                     "A Steam file is missing, redirected or differs from the supported build: ") + file.Name);

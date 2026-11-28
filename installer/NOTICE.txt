@@ -27,5 +27,6 @@ See the included license texts and build.txt for the source revision and
 SHA-256 of the bundled loader and its release source companion.
 
 Hades II and its assets belong to their respective owners. The preview
-requires a matching locally installed Steam copy of Hades II. Game files
-are copied locally by Setup and are absent from the installation package.
+requires a matching locally installed Steam copy of Hades II. The preview
+runs the locally installed game. The installation package contains mod files
+and their notices.

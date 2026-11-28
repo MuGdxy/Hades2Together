@@ -107,11 +107,26 @@ internal sealed class Paths : IDisposable
 
     internal static string Hex(byte[] bytes) => BitConverter.ToString(bytes).Replace("-", "");
 
-    internal static void DeleteVerified(string path, long? size, string hash)
+    internal static string Identity(string path, bool directory)
+    {
+        using var handle = Open(path, directory);
+        return Identity(handle);
+    }
+
+    internal static string Identity(SafeFileHandle handle)
+    {
+        if (!GetFileInformationByHandle(handle, out var info) || (info.IndexHigh == 0 && info.IndexLow == 0))
+            throw new IOException("Windows could not identify the owned file or directory.");
+        return $"{info.Volume:X8}:{info.IndexHigh:X8}{info.IndexLow:X8}";
+    }
+
+    internal static void DeleteVerified(string path, long? size, string hash, string identity = null)
     {
         using var handle = Open(path, directory: false, delete: true);
+        if (identity != null && Identity(handle) != identity)
+            return;
         using var stream = new FileStream(handle, FileAccess.Read, 1024 * 1024);
-        if ((!size.HasValue || stream.Length == size.Value) && Hash(stream) == hash &&
+        if ((!size.HasValue || stream.Length == size.Value) && (hash == null || Hash(stream) == hash) &&
             !SetFileInformationByHandle(handle, 4, new byte[] { 1 }, 1))
             throw new IOException("Unable to remove the owned file: " + path);
     }

@@ -19,33 +19,38 @@ public sealed class InstallState
     public string BootstrapHash { get; set; }
     public string ShortcutHash { get; set; }
     public Dictionary<string, string> Manifests { get; set; } = new Dictionary<string, string>();
+    public List<GameFileClaim> GameFiles { get; set; } = new List<GameFileClaim>();
 }
 
 public sealed class StageManifest
 {
     public string Version { get; set; }
     public string Source { get; set; }
+    public OwnedFile Loader { get; set; }
     public OwnedFile[] Files { get; set; }
 }
 
 internal sealed class Install
 {
-    private const string StateFormat = "Hades2Together.Preview/1";
+    private const string StateFormat = "Hades2Together.Preview/2";
     private const string ManifestName = "ownership.json";
     private const string IncomingName = ".incoming";
     internal const string LauncherName = "PreviewApp.exe";
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 4 * 1024 * 1024 };
     private readonly string root;
     private readonly Integration integration;
-    private readonly Func<long> freeSpace;
+    private readonly Func<string, long> freeSpace;
+    private readonly IReadOnlyList<OwnedFile> stockPins;
     private string StateFile => Path.Combine(root, "state.json");
     private string Bootstrap => Path.Combine(root, "Preview.exe");
 
-    internal Install(string root, Integration integration, Func<long> freeSpace = null)
+    internal Install(string root, Integration integration, Func<string, long> freeSpace = null,
+        IReadOnlyList<OwnedFile> stockPins = null)
     {
         this.root = Paths.Full(root);
         this.integration = integration;
-        this.freeSpace = freeSpace ?? (() => new DriveInfo(Path.GetPathRoot(this.root)).AvailableFreeSpace);
+        this.freeSpace = freeSpace ?? (drive => new DriveInfo(drive).AvailableFreeSpace);
+        this.stockPins = stockPins ?? SteamGame.Pins;
     }
 
     internal static Install ForUser() => new Install(
@@ -76,27 +81,43 @@ internal sealed class Install
             throw new IOException(Texts.Choose("请先完成卸载，再重新安装。", "Finish uninstalling the preview before reinstalling."));
         var previousId = state.Active;
         var previous = previousId == null ? null : ReadManifest(state, previousId);
-        SteamGame.Check(source, package.SteamFiles, progress);
+        progress?.Invoke(source);
+        SteamGame.Check(source, stockPins);
 
         // Reclaim an interrupted copy before measuring the space for a new one.
         if (state.Pending != null)
         {
             using var recoveryGuard = new Paths(root);
+            var pendingStage = Stage(state.Pending);
+            if (Paths.Exists(pendingStage))
+            {
+                using var pendingGuard = new Paths(pendingStage);
+                if (Paths.Exists(Path.Combine(pendingStage, ManifestName)))
+                    ReadManifest(state, state.Pending);
+            }
+            GameSlot.Remove(state, state.Pending);
             CollectRetired(state, onlyPending: true);
             if (state.Pending != null)
                 throw new IOException("An interrupted setup could not be recovered.");
         }
 
+        var gameSlot = new GameSlot(source, package.Loader);
         // Validate the entire source and check space before starting a new transaction.
         var reuse = previous != null && previous.Version == package.Version &&
+            !gameSlot.NeedsLoader && previous.Loader.Hash == package.Loader.Hash &&
             string.Equals(previous.Source, source, StringComparison.OrdinalIgnoreCase) &&
-            previous.Files.SequenceEqual(package.Files, new FileIdentity()) &&
+            previous.Files.SequenceEqual(package.Additions, new FileIdentity()) &&
             previous.Files.All(file => SteamGame.Matches(Stage(state.Active), file, strict: false));
         if (!reuse)
         {
-            var needed = package.Bytes + package.Bootstrap.Size + 64L * 1024 * 1024;
-            if (freeSpace() < needed)
+            var profileDrive = Path.GetPathRoot(root);
+            var steamDrive = Path.GetPathRoot(source);
+            var sameDrive = string.Equals(profileDrive, steamDrive, StringComparison.OrdinalIgnoreCase);
+            var needed = package.ProfileBytes + 1024 * 1024 + (sameDrive ? gameSlot.SteamBytes : 0);
+            if (freeSpace(profileDrive) < needed)
                 throw new IOException(Texts.Choose("预览目录磁盘空间不足，需要 ", "The preview drive needs ") + Texts.Space(needed));
+            if (!sameDrive && gameSlot.SteamBytes > 0 && freeSpace(steamDrive) < gameSlot.SteamBytes)
+                throw new IOException(Texts.Choose("Steam 库驱动器需要可用空间 ", "The Steam library drive needs ") + Texts.Space(gameSlot.SteamBytes));
         }
 
         using var guard = new Paths(root, create: true);
@@ -112,8 +133,13 @@ internal sealed class Install
 
         var id = Guid.NewGuid().ToString("N");
         var stage = Stage(id);
-        var manifest = new StageManifest { Version = package.Version, Source = source, Files = package.Files.ToArray() };
+        var manifest = new StageManifest
+        {
+            Version = package.Version, Source = source, Loader = package.Loader, Files = package.Additions.ToArray()
+        };
         var manifestBytes = Encode(manifest);
+        if (state.Active == null && !Paths.Exists(Bootstrap))
+            state.BootstrapHash = package.Bootstrap.Hash;
         if (state.BootstrapHash == null)
         {
             if (Paths.Exists(Bootstrap))
@@ -134,16 +160,9 @@ internal sealed class Install
                 var incoming = Path.Combine(stage, IncomingName);
                 WriteNew(incoming, manifestBytes);
                 File.Move(incoming, Path.Combine(stage, ManifestName));
-                foreach (var file in package.SteamFiles)
-                {
-                    progress?.Invoke(file.Name);
-                    var from = Paths.Child(source, file.Name);
-                    using var sourceGuard = new Paths(Path.GetDirectoryName(from));
-                    using var stream = Paths.Read(from);
-                    CopyVerified(stage, file, stream, stage);
-                }
                 foreach (var file in package.Additions)
                 {
+                    progress?.Invoke(file.Name);
                     using var stream = package.Open(file);
                     CopyVerified(stage, file, stream, stage);
                 }
@@ -162,6 +181,9 @@ internal sealed class Install
             }
             registered = true;
             integration.Register(Bootstrap, state, () => Save(state));
+            SteamGame.Check(source, stockPins);
+            gameSlot.Publish(package, state, id, () => Save(state));
+            GameSlot.RebindKnownMoves(state, gameSlot);
             state.Active = id;
             state.Pending = null;
             Save(state); // The previous generation remains active until this atomic replace.
@@ -170,6 +192,7 @@ internal sealed class Install
         {
             state.Active = previousId;
             state.Pending = id;
+            GameSlot.Remove(state, id);
             if (isFirstInstall && registered)
                 integration.Remove(Bootstrap, state);
             if (installedBootstrap)
@@ -204,6 +227,8 @@ internal sealed class Install
             state.Active = null;
             state.Removing = true;
             Save(state);
+            GameSlot.Remove(state, generation: null);
+            Save(state);
             CollectRetired(state);
             if (state.Manifests.Count != 0)
                 throw new IOException(Texts.Choose("部分安装文件仍被占用，或所有权清单已改变。", "Some installed files are busy or an ownership manifest has changed."));
@@ -218,6 +243,14 @@ internal sealed class Install
 
     internal void Launch()
     {
+        using var game = System.Diagnostics.Process.Start(PrepareLaunch());
+        game.WaitForExit();
+        if (game.ExitCode != 0)
+            throw new IOException(Texts.Choose("预览游戏退出，代码 ", "The preview game exited with code ") + game.ExitCode);
+    }
+
+    internal System.Diagnostics.ProcessStartInfo PrepareLaunch()
+    {
         using var guard = new Paths(root);
         var state = ReadState();
         if (state.Active == null)
@@ -225,31 +258,18 @@ internal sealed class Install
         var stage = Stage(state.Active);
         using var stageGuard = new Paths(stage);
         var manifest = ReadManifest(state, state.Active);
-        var required = SteamGame.Critical.Concat(new[] { "Ship/d3d12.dll" });
-        foreach (var name in required)
-        {
-            var file = manifest.Files.Single(item => item.Name == name);
-            if (!SteamGame.Matches(stage, file, strict: true))
-                throw new IOException(Texts.Choose("预览文件已改变，请重新安装：", "A preview file changed. Reinstall the preview: ") + name);
-        }
+        if (!Directory.Exists(manifest.Source))
+            throw new IOException(Texts.Choose("Steam 游戏已移动。请重新运行安装程序并选择新目录。",
+                "The Steam game folder moved. Run Setup again and select the new location."));
+        SteamGame.Check(manifest.Source, stockPins);
+        var gameSlot = new GameSlot(manifest.Source, manifest.Loader);
+        if (gameSlot.NeedsLoader)
+            throw new IOException(Texts.Choose("预览加载器已被移除，请重新运行安装程序。",
+                "The preview loader was removed. Run Setup again."));
         CheckTree(stage);
-        var ship = Path.Combine(stage, "Ship");
         var profile = Path.Combine(stage, "profile");
         using var profileGuard = new Paths(Path.Combine(profile, "Hades2Together"), create: true);
-        var start = new System.Diagnostics.ProcessStartInfo(Path.Combine(ship, "Hades2.exe"))
-        {
-            UseShellExecute = false,
-            WorkingDirectory = ship,
-            Arguments = "/Windowed=true /RequireFocusToUpdate=false /AllowSaveLoad=false /UseDevSaves=true " +
-                "/DevSavePathStr=\"" + profile + "\" /AllowControlHotSwap=false /DirectLoad=F_Combat02 /DirectLoadShell=false"
-        };
-        start.EnvironmentVariables["USERPROFILE"] = profile;
-        start.EnvironmentVariables["SteamAppId"] = SteamGame.AppId;
-        start.EnvironmentVariables["H2T_SAMPLER_SCRATCH_SHIP"] = ship;
-        using var game = System.Diagnostics.Process.Start(start);
-        game.WaitForExit();
-        if (game.ExitCode != 0)
-            throw new IOException(Texts.Choose("预览游戏退出，代码 ", "The preview game exited with code ") + game.ExitCode);
+        return GameSlot.StartInfo(manifest.Source, stage, profile);
     }
 
     internal byte[] ReadActiveLauncher(bool allowUninstallRecovery = false)
@@ -289,11 +309,12 @@ internal sealed class Install
         using var stream = Paths.Read(StateFile);
         using var reader = new StreamReader(stream);
         var state = Json.Deserialize<InstallState>(reader.ReadToEnd());
-        if (state?.Format != StateFormat || state.Manifests == null ||
+        if (state?.Format != StateFormat || state.Manifests == null || state.GameFiles == null ||
             (state.Active != null && (!state.Manifests.ContainsKey(state.Active) || state.Removing)) ||
             (state.Pending != null && (!state.Manifests.ContainsKey(state.Pending) || state.Pending == state.Active)) ||
             !ValidHash(state.BootstrapHash) || !ValidHash(state.ShortcutHash) ||
-            state.Manifests.Any(entry => !Id(entry.Key) || entry.Value == null || !ValidHash(entry.Value)))
+            state.Manifests.Any(entry => !Id(entry.Key) || entry.Value == null || !ValidHash(entry.Value)) ||
+            state.GameFiles.Any(file => file == null || !file.Valid()))
             throw new IOException("Invalid preview installation state.");
         return state;
     }
@@ -318,9 +339,10 @@ internal sealed class Install
         stream.Position = 0;
         using var reader = new StreamReader(stream);
         var manifest = Json.Deserialize<StageManifest>(reader.ReadToEnd());
-        if (manifest?.Files == null)
+        if (manifest?.Files == null || manifest.Loader?.Name != "Ship/" + GameSlot.LoaderName ||
+            Paths.Full(manifest.Source) != manifest.Source)
             throw new IOException("Invalid preview ownership manifest.");
-        OwnedFile.Validate(manifest.Files);
+        OwnedFile.Validate(manifest.Files.Append(manifest.Loader));
         return manifest;
     }
 

@@ -1,7 +1,6 @@
 param(
     [Parameter(Mandatory)][string]$ScratchDirectory,
-    [string]$SetupExe,
-    [string]$GameDirectory
+    [string]$SetupExe
 )
 $ErrorActionPreference = 'Stop'
 if (Test-Path -LiteralPath $ScratchDirectory) { throw 'Choose a fresh fixture directory.' }
@@ -19,7 +18,7 @@ $tokens = $null
 $errors = $null
 $null = [Management.Automation.Language.Parser]::ParseFile("$scratch/uninstall-command.ps1", [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-if ($SetupExe -and $GameDirectory) {
-    & $test $scratch '--stage' (Resolve-Path -LiteralPath $SetupExe).Path (Resolve-Path -LiteralPath $GameDirectory).Path
-    if ($LASTEXITCODE) { throw "Full staging fixture failed: $LASTEXITCODE" }
+if ($SetupExe) {
+    & $test $scratch '--stage' (Resolve-Path -LiteralPath $SetupExe).Path
+    if ($LASTEXITCODE) { throw "Packaged mod fixture failed: $LASTEXITCODE" }
 }

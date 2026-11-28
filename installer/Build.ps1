@@ -1,5 +1,4 @@
 param(
-    [Parameter(Mandatory)][string]$SteamCatalog,
     [Parameter(Mandatory)][string]$Loader,
     [Parameter(Mandatory)][string]$Dependencies,
     [Parameter(Mandatory)][string]$OutputDirectory,
@@ -21,7 +20,6 @@ function Assert-Pin([string]$path, [string]$hash) {
         throw "SHA-256 mismatch or no pin supplied: $path"
     }
 }
-Assert-Pin $SteamCatalog '0AFCBF4D3A8E99EF27281FA3A299AF36DC53FC2D50F0E620096A107427939E35'
 if ($DevelopmentFixture) {
     Assert-Pin $Loader $developmentHash
     $LoaderSha256 = $developmentHash
@@ -87,7 +85,7 @@ $entries['PreviewApp.exe'] = $versionedLauncher
 $entries['Ship/d3d12.dll'] = $Loader
 $entries['Notices/Hades2Together-LICENSE.txt'] = "$repo/LICENSE"
 $entries['Notices/NOTICE.txt'] = "$PSScriptRoot/NOTICE.txt"
-$entries['Ship/ReturnOfModding/config/Hell2Modding-Hell2Modding-GUI.cfg'] = "$PSScriptRoot/Loader-GUI.toml"
+$entries['ReturnOfModding/config/Hell2Modding-Hell2Modding-GUI.cfg'] = "$PSScriptRoot/Loader-GUI.toml"
 $provenance = "$out/build.txt"
 @(
     "Version: $version"
@@ -97,7 +95,7 @@ $provenance = "$out/build.txt"
     "Hades2Together-Loader-Source.zip SHA-256: $LoaderSourceSha256"
 ) | Set-Content -LiteralPath $provenance -Encoding UTF8
 $entries['Notices/build.txt'] = $provenance
-$plugins = 'Ship/ReturnOfModding/plugins'
+$plugins = 'ReturnOfModding/plugins'
 foreach ($path in $pluginFiles) {
     if ($path -cnotmatch '^src/([a-zA-Z0-9_/-]+\.lua|manifest\.json|hack/H2TGuest\.bin)$') {
         throw "Unexpected Hades2Together plugin file: $path"
@@ -147,7 +145,7 @@ try {
 
 $artifact = "$out/$artifactName"
 Invoke-PreviewCompiler -Output $artifact -Sources $sources -Options @(
-    '/target:winexe', '/define:SETUP', $nativeManifest, "/resource:$SteamCatalog,steam.tsv", "/resource:$payloadPath,payload.zip"
+    '/target:winexe', '/define:SETUP', $nativeManifest, "/resource:$payloadPath,payload.zip"
 )
 if (!$DevelopmentFixture) {
     Copy-Item -LiteralPath $LoaderSourceZip -Destination "$out/Hades2Together-Loader-Source.zip"

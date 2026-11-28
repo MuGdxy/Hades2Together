@@ -19,7 +19,7 @@ internal static class Texts
     private static readonly bool Chinese = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh";
     internal static string Choose(string chinese, string english) => Chinese ? chinese : english;
     internal static string Title => Choose("Hades2Together 预览版", "Hades2Together Preview");
-    internal static string Space(long bytes) => (bytes / (1024.0 * 1024 * 1024)).ToString("0.0", CultureInfo.CurrentCulture) + " GiB";
+    internal static string Space(long bytes) => (bytes / (1024.0 * 1024)).ToString("0.0", CultureInfo.CurrentCulture) + " MiB";
 }
 
 internal static class Program
@@ -68,8 +68,13 @@ internal static class Program
                 using var package = Package.Embedded();
                 if (args[0] == "--check")
                 {
-                    SteamGame.Check(Paths.Full(args[1]), package.SteamFiles, null);
-                    Console.WriteLine("Compatible Steam build 143476; preview content " + Texts.Space(package.Bytes));
+                    var source = Paths.Full(args[1]);
+                    SteamGame.Check(source, SteamGame.Pins);
+                    var slot = new GameSlot(source, package.Loader);
+                    Console.WriteLine("Compatible Steam build 143476");
+                    Console.WriteLine("download_bytes=" + new FileInfo(Assembly.GetExecutingAssembly().Location).Length);
+                    Console.WriteLine("profile_payload_bytes=" + package.ProfileBytes);
+                    Console.WriteLine("steam_payload_bytes=" + slot.SteamBytes);
                 }
                 else
                     Install.Exclusive(() => Install.ForUser().Apply(package, args[1], null));
@@ -182,9 +187,9 @@ internal sealed class SetupForm : Form
         var details = new Label
         {
             Text = Texts.Choose(
-                "需要兼容的 Steam 版《哈迪斯 II》v1.143476。预览版在独立目录运行，已禁用存档。首次安装或升级约需 ",
-                "Requires Hades II Steam v1.143476. The preview runs in its own folder with saves disabled. Installation or upgrade needs about ") +
-                Texts.Space(package.Bytes + 64L * 1024 * 1024) + Texts.Choose(" 可用空间。", " free space."),
+                "需要兼容的 Steam 版《哈迪斯 II》v1.143476。预览版使用现有游戏和独立模组配置，已禁用存档。首次安装至多需要 ",
+                "Requires Hades II Steam v1.143476. The preview uses your existing game and a separate mod profile with saves disabled. A fresh install needs up to ") +
+                Texts.Space(package.ProfileBytes + package.Loader.Size + 1024L * 1024) + Texts.Choose(" 可用空间。", " free space."),
             MaximumSize = new Size(550, 0), AutoSize = true, Margin = new Padding(3, 3, 3, 12)
         };
         var label = new Label { Text = Texts.Choose("Steam 游戏目录", "Steam game folder"), AutoSize = true };
@@ -240,9 +245,8 @@ internal sealed class SetupForm : Form
         status.Text = Texts.Choose("正在查找 Steam 安装…", "Looking for Steam installations…");
         try
         {
-            var critical = package.SteamFiles.Where(file => SteamGame.Critical.Contains(file.Name)).ToArray();
             var matches = await Task.Run(() => SteamLibraries.Find().Distinct(StringComparer.OrdinalIgnoreCase)
-                .Where(path => critical.All(file => SteamGame.Matches(path, file, strict: false))).ToArray());
+                .Where(path => SteamGame.Pins.All(file => SteamGame.Matches(path, file, strict: false))).ToArray());
             folders.Items.AddRange(matches);
             if (matches.Length > 0)
                 folders.SelectedIndex = 0;
@@ -265,7 +269,7 @@ internal sealed class SetupForm : Form
             return;
         }
         SetBusy(true);
-        status.Text = Texts.Choose("正在验证并安装。复制游戏文件可能需要几分钟。", "Verifying and installing. Copying game files may take a few minutes.");
+        status.Text = Texts.Choose("正在检查 Steam 版本并安装模组…", "Checking the Steam build and installing the mod…");
         try
         {
             await Task.Run(() => Install.Exclusive(() => Install.ForUser().Apply(package, path, null)));
