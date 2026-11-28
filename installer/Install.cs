@@ -37,13 +37,15 @@ internal sealed class Install
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 4 * 1024 * 1024 };
     private readonly string root;
     private readonly Integration integration;
+    private readonly Func<long> freeSpace;
     private string StateFile => Path.Combine(root, "state.json");
     private string Bootstrap => Path.Combine(root, "Preview.exe");
 
-    internal Install(string root, Integration integration)
+    internal Install(string root, Integration integration, Func<long> freeSpace = null)
     {
         this.root = Paths.Full(root);
         this.integration = integration;
+        this.freeSpace = freeSpace ?? (() => new DriveInfo(Path.GetPathRoot(this.root)).AvailableFreeSpace);
     }
 
     internal static Install ForUser() => new Install(
@@ -76,6 +78,15 @@ internal sealed class Install
         var previous = previousId == null ? null : ReadManifest(state, previousId);
         SteamGame.Check(source, package.SteamFiles, progress);
 
+        // Reclaim an interrupted copy before measuring the space for a new one.
+        if (state.Pending != null)
+        {
+            using var recoveryGuard = new Paths(root);
+            CollectRetired(state, onlyPending: true);
+            if (state.Pending != null)
+                throw new IOException("An interrupted setup could not be recovered.");
+        }
+
         // Validate the entire source and check space before starting a new transaction.
         var reuse = previous != null && previous.Version == package.Version &&
             string.Equals(previous.Source, source, StringComparison.OrdinalIgnoreCase) &&
@@ -83,19 +94,12 @@ internal sealed class Install
             previous.Files.All(file => SteamGame.Matches(Stage(state.Active), file, strict: false));
         if (!reuse)
         {
-            var available = new DriveInfo(Path.GetPathRoot(root)).AvailableFreeSpace;
             var needed = package.Bytes + package.Bootstrap.Size + 64L * 1024 * 1024;
-            if (available < needed)
+            if (freeSpace() < needed)
                 throw new IOException(Texts.Choose("预览目录磁盘空间不足，需要 ", "The preview drive needs ") + Texts.Space(needed));
         }
 
         using var guard = new Paths(root, create: true);
-        if (state.Pending != null)
-        {
-            CollectRetired(state);
-            if (state.Pending != null)
-                throw new IOException("An interrupted setup could not be recovered.");
-        }
         integration.Prepare(Bootstrap, state);
         if (reuse)
         {
@@ -384,9 +388,9 @@ internal sealed class Install
             throw new IOException("The preview launcher is missing or has changed.");
     }
 
-    private void CollectRetired(InstallState state)
+    private void CollectRetired(InstallState state, bool onlyPending = false)
     {
-        foreach (var id in state.Manifests.Keys.Where(id => id != state.Active).ToArray())
+        foreach (var id in state.Manifests.Keys.Where(id => id != state.Active && (!onlyPending || id == state.Pending)).ToArray())
         {
             var hash = state.Manifests[id];
             if (RemoveStage(state, id))

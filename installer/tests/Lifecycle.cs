@@ -48,6 +48,10 @@ internal static class Lifecycle
         Assert(!Directory.Exists(Preview), "validation happens before installation writes");
         File.WriteAllText(source, "owned Steam fixture");
 
+        var noSpace = new Install(Preview, os, () => 0);
+        ExpectError(() => noSpace.Apply(first, Steam, null));
+        Assert(!Directory.Exists(Preview) && !os.Registered, "fresh install with insufficient space makes no writes");
+
         app.Apply(first, Steam, null);
         var original = State().Active;
         Assert(os.Registered && File.Exists(Path.Combine(Preview, "Preview.exe")), "setup integration");
@@ -82,10 +86,19 @@ internal static class Lifecycle
         var interrupted = State().Pending;
         Assert(interrupted != null && State().Active == original, "terminated setup left previous launcher active");
         Assert(File.Exists(Path.Combine(Stage(interrupted), ".incoming")), "partial staging file was journaled");
-        app.Apply(first, Steam, null);
-        Assert(!Directory.Exists(Stage(interrupted)) && State().Pending == null, "retry reclaimed interrupted generation");
-
-        app.Apply(second, Steam, null);
+        var retained = Path.Combine(Stage(interrupted), "personal-note.txt");
+        File.WriteAllText(retained, "keep this");
+        var probed = false;
+        var recovery = new Install(Preview, os, () =>
+        {
+            probed = true;
+            Assert(State().Active == original, "recovery preserves the active version while measuring space");
+            Assert(File.Exists(retained), "recovery preserves unrelated files");
+            return File.Exists(Path.Combine(Stage(interrupted), ".incoming")) ? 0 : 128L * 1024 * 1024;
+        });
+        recovery.Apply(second, Steam, null);
+        Assert(probed && State().Pending == null && !File.Exists(Path.Combine(Stage(interrupted), ".incoming")),
+            "retry reclaims the pending copy before measuring space");
         var updated = State().Active;
         Assert(updated != original && !Directory.Exists(Stage(original)), "upgrade switched generation and retired old files");
         Assert(Encoding.UTF8.GetString(app.ReadActiveLauncher()) == "fixture launcher second", "upgraded launcher active");
