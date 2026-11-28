@@ -1,0 +1,31 @@
+Hades2Together Preview
+
+Hades2Together and this installer are distributed under the MIT license.
+Source: https://github.com/MuGdxy/Hades2Together
+
+The bundled native loader is a modified Hell2Modding 1.0.125, including
+the Hell2Modding-GLOBAL fallback plugin. Hell2Modding and the loader's
+base are MIT licensed. The Hades2Together native overlay provides the
+Hades2Together input API.
+Hell2Modding source: https://github.com/SGG-Modding/Hell2Modding/tree/a80069739d1333591c7ddfb89b606d9101bd31f4
+Overlay source: https://github.com/MuGdxy/Hades2Together/tree/h2t-development/native/host-input
+
+Tolk (accessibility and screen-reader support) is statically linked.
+Tolk is licensed under the GNU Lesser General Public License, version 3.
+The loader includes Tolk's NVDA interface with its LGPL 2.1 notice.
+Tolk source: https://github.com/xiaoxiao921/tolk/tree/91e9aec
+For a release, obtain Hades2Together-Loader-Source.zip alongside this
+installer. It contains the matching source and relinking instructions.
+You may modify or reverse engineer the combined work as needed to debug
+your modifications to the LGPL components.
+
+LuaENVY ENVY 1.2.1 is distributed under the MIT license.
+Source: https://github.com/LuaENVY/ENVY
+Package: https://thunderstore.io/c/hades-ii/p/LuaENVY/ENVY/v/1.2.1/
+
+See the included license texts and build.txt for the source revision and
+SHA-256 of the bundled loader and its release source companion.
+
+Hades II and its assets belong to their respective owners. The preview
+requires a matching locally installed Steam copy of Hades II. Game files
+are copied locally by Setup and are absent from the installation package.
