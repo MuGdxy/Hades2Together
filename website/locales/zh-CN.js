@@ -29,7 +29,7 @@ export default {
   "guideTitle": "安装与卸载",
   "installTitle": "安装预览版",
   "installDownload": "下载并运行 Hades2Together-Setup.exe。",
-  "installChoose": "安装程序会查找兼容的 Steam 版《哈迪斯 II》，必要时会提示你选择游戏安装文件夹。预览版使用独立的游戏副本，请在安装预览版的磁盘上额外预留约 11 GiB 空间。更新时会在同一磁盘上临时准备另一份副本。",
+  "installChoose": "你需要事先通过 Steam 安装兼容版本的《哈迪斯 II》。安装程序会自动查找游戏，必要时会提示你选择游戏安装文件夹。安装程序仅安装模组，预览版使用已有的游戏文件。",
   "installLaunch": "安装完成后，从 Windows 开始菜单中使用独立的 Hades2Together 快捷方式启动。",
   "uninstallTitle": "卸载预览版",
   "uninstallClose": "关闭 Hades2Together 预览版。",

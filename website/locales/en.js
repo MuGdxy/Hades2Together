@@ -29,7 +29,7 @@ export default {
   "guideTitle": "Install and uninstall",
   "installTitle": "Install the preview",
   "installDownload": "Download Hades2Together-Setup.exe and run it.",
-  "installChoose": "The installer looks for a compatible Steam installation of Hades II and asks you to choose the game folder if needed. The preview uses a separate copy and needs about 11 GiB of extra free space on the drive where it is installed. Updates temporarily stage a second copy on that drive.",
+  "installChoose": "You need a compatible Steam installation of Hades II. The installer looks for it automatically and asks you to select the game folder if needed. Setup installs only the mod, and the preview uses your existing game files.",
   "installLaunch": "When setup finishes, open Hades2Together from its separate Windows Start menu shortcut.",
   "uninstallTitle": "Uninstall the preview",
   "uninstallClose": "Close the Hades2Together preview.",
