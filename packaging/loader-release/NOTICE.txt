@@ -1,0 +1,22 @@
+Hades2Together Windows preview loader
+
+This loader includes Tolk by Davy Kager and contributors, statically linked
+under the GNU Lesser General Public License version 3. For Tolk source,
+license texts and the recipe to use a modified version, see the accompanying
+Hades2Together-Loader-Source.zip distributed alongside this release. The
+license directory includes GNU LGPLv3, GNU GPLv3 and the upstream LGPLv2.1
+notice for the optional NVDA controller client. Tolk may use external
+screen reader clients when separately present on the system.
+
+The loader incorporates MIT-licensed Hell2Modding by SGG-Modding contributors
+and Hades2Together party preview changes. The source companion identifies the
+upstream commit and source differences in provenance.json and README.md.
+Third-party license texts are in the licenses directory.
+
+The native build uses ReturnOfModdingBase, AsyncLogger, Dear ImGui with its
+stb components and Tristan Grimmer's ProggyClean font, Sol2, the Hades II Lua
+fork, LPeg, LuaSocket, EASTL and EABase, raw_pdb, Capstone, SafetyHook,
+PolyHook 2, AsmJit, AsmTK, Zydis and Zycore, pugixml, nlohmann/json,
+unordered_dense, cpp-semver, toml++, magic_enum, and lovely-lib. The source
+companion records their exact revisions and the Rust dependency lock and
+notices. Corrosion is used as a build tool.

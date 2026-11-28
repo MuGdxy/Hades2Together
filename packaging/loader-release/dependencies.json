@@ -1,0 +1,143 @@
+[
+  {
+    "name": "asynclogger",
+    "url": "https://github.com/xiaoxiao921/AsyncLogger.git",
+    "commit": "6a52a826cd5f615beed167aa097baa0533c122b6"
+  },
+  {
+    "name": "capstone",
+    "url": "https://github.com/aquynh/capstone.git",
+    "commit": "484857da5dc67f7d0e0a01c36b0ebc37a349e0fd"
+  },
+  {
+    "name": "corrosion",
+    "url": "https://github.com/corrosion-rs/corrosion.git",
+    "commit": "1499b14e4906a2890f5cee1547c8848db261753d"
+  },
+  {
+    "name": "cpp-semver",
+    "url": "https://github.com/z4kn4fein/cpp-semver.git",
+    "commit": "4ec4ef214f6ecb2782ccc1f04e775902de7cad82"
+  },
+  {
+    "name": "eastl",
+    "url": "https://github.com/electronicarts/EASTL.git",
+    "commit": "05f4b4aef33f2f3ded08f19fa97f5a27ff35ff9f",
+    "submodules": [
+      {
+        "name": "eabase",
+        "url": "https://github.com/electronicarts/EABase.git",
+        "commit": "521cb053d9320636f53226ffc616216cf532f0ef",
+        "path": "test/packages/EABase"
+      }
+    ]
+  },
+  {
+    "name": "hashmap",
+    "url": "https://github.com/martinus/unordered_dense.git",
+    "commit": "73f3cbb237e84d483afafc743f1f14ec53e12314"
+  },
+  {
+    "name": "imgui",
+    "url": "https://github.com/ocornut/imgui.git",
+    "commit": "231cbee0fc4f59dbe5b8b853a11b08dc84e57c65"
+  },
+  {
+    "name": "json",
+    "url": "https://github.com/nlohmann/json.git",
+    "commit": "9f40a7b454befb6e836b493b41df9e64c7a6fd63"
+  },
+  {
+    "name": "lovely_lib",
+    "url": "https://github.com/xiaoxiao921/lovely-lib.git",
+    "commit": "19f5a98430bd09a6a0e337cd9e62d189b9c43f6a"
+  },
+  {
+    "name": "lpeg",
+    "url": "https://github.com/xiaoxiao921/lpeg-1.1.0.git",
+    "commit": "27fb17657b9529cd430f99fc21318183f53c1741"
+  },
+  {
+    "name": "luasocket",
+    "url": "https://github.com/xiaoxiao921/luasocket.git",
+    "commit": "e86e864dc585b65f86769d51a8ed4cc804429040"
+  },
+  {
+    "name": "lua_static",
+    "url": "https://github.com/xiaoxiao921/lua-fork-hades2.git",
+    "commit": "e2f0a33c52c18516c61b6fedfd6b518c5f0fbdb5"
+  },
+  {
+    "name": "magic_enum",
+    "url": "https://github.com/Neargye/magic_enum.git",
+    "commit": "e55b9b54d5cf61f8e117cafb17846d7d742dd3b4"
+  },
+  {
+    "name": "polyhook",
+    "url": "https://github.com/stevemk14ebr/PolyHook_2_0.git",
+    "commit": "8cd6cb4ef0f2a599f35bdd46ac5833843aea6523",
+    "submodules": [
+      {
+        "name": "asmjit",
+        "url": "https://github.com/asmjit/asmjit.git",
+        "commit": "d6c5be2212b9a50ba56ec6d1e9b68693c62136c1",
+        "path": "asmjit"
+      },
+      {
+        "name": "asmtk",
+        "url": "https://github.com/asmjit/asmtk.git",
+        "commit": "6e25b8983fbd8bf455c01ed7c5dd40c99b789565",
+        "path": "asmtk"
+      },
+      {
+        "name": "zydis",
+        "url": "https://github.com/zyantific/zydis.git",
+        "commit": "d4c37ae7a9db989495eb66636a65d8d4ff69eb35",
+        "path": "zydis",
+        "submodules": [
+          {
+            "name": "zycore",
+            "url": "https://github.com/zyantific/zycore-c.git",
+            "commit": "685c3350ef91b566af7eef7c332467e3a027ea0f",
+            "path": "dependencies/zycore"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "pugixml",
+    "url": "https://github.com/zeux/pugixml.git",
+    "commit": "a0e064336317c9347a91224112af9933598714e9"
+  },
+  {
+    "name": "raw_pdb",
+    "url": "https://github.com/MolecularMatters/raw_pdb.git",
+    "commit": "479cd28468481f4df43cb392953da7e6636c70b6"
+  },
+  {
+    "name": "rom",
+    "url": "https://github.com/xiaoxiao921/ReturnOfModdingBase.git",
+    "commit": "693360501a0b5309e302956fca1c5aaf528da441"
+  },
+  {
+    "name": "safetyhook",
+    "url": "https://github.com/cursey/safetyhook.git",
+    "commit": "1c10b2fe7de7587e6ab1fb4e00bf992bb5793961"
+  },
+  {
+    "name": "sol2",
+    "url": "https://github.com/ThePhD/sol2.git",
+    "commit": "eba86625b707e3c8c99bbfc4624e51f42dc9e561"
+  },
+  {
+    "name": "tolk",
+    "url": "https://github.com/xiaoxiao921/tolk.git",
+    "commit": "91e9aec1b6dfe68e5995153e8246e1b37d25870b"
+  },
+  {
+    "name": "toml++",
+    "url": "https://github.com/marzer/tomlplusplus.git",
+    "commit": "30172438cee64926dc41fdd9c11fb3ba5b2ba9de"
+  }
+]
