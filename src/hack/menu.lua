@@ -1,35 +1,21 @@
--- Watches the control queue. The webpage is a separate local server, because
--- this process stops rendering when its window is in the background.
+-- Polls the queue on game updates. The control page runs in its own process.
 
 local Bridge = import("dev/bridge.lua")
 local Console = import("dev/console.lua")
 local Inputs = import("dev/inputs.lua")
-local Game = import("hack/game.lua")
+
+local Session = import("protocol/session.lua")
 
 local Menu = {}
 
-local console
-local commandsPath
-local statusPath
-local logged = false
-
-local function logOnce(text)
-  if logged then
-    return
-  end
-  logged = true
-  print("[Hades2Together] " .. text)
-end
-
-local function controlPaths()
-  local home = os.getenv("USERPROFILE") or os.getenv("HOME") or "."
-  local root = home .. "\\Hades2Together"
-  return root .. "\\commands.txt", root .. "\\status.txt"
-end
-
-local function inputsPath()
-  local home = os.getenv("USERPROFILE") or os.getenv("HOME") or "."
-  return home .. "\\Hades2Together\\inputs.txt"
+function Menu.new(session)
+  local root = Bridge.controlRoot()
+  return {
+    console = Console.new(session),
+    commandsPath = root .. "\\commands.txt",
+    statusPath = root .. "\\status.txt",
+    inputsPath = root .. "\\inputs.txt",
+  }
 end
 
 local function readAll(path)
@@ -42,63 +28,105 @@ local function readAll(path)
   return text
 end
 
-local function pump()
-  if not console then
-    return
+function Menu.publish(control, game, state)
+  local killAllLine = Bridge.killAllLine(game:KillAllReceipt())
+  local claims = Bridge.claimLines(game:RoomRewards())
+  local boundIds = {}
+  local heroes = game:ReadHeroes(boundIds)
+  local report = io.open(control.statusPath, "wb")
+  if report then
+    report:write(Bridge.statusText(control.console))
+    report:write("control=" .. state .. "\n")
+    if control.results then
+      report:write(table.concat(control.results, "\n") .. "\n")
+    end
+    if killAllLine then report:write(killAllLine .. "\n") end
+    report:write(game:BodyReport() .. "\n")
+    for _, hero in ipairs(heroes) do report:write(Bridge.actorLine("hero", hero) .. "\n") end
+    for seat in pairs(game.session.slots) do
+      if not boundIds[seat] then report:write("unbound seat=" .. seat .. "\n") end
+    end
+    for _, line in ipairs(claims) do report:write(line .. "\n") end
+    report:close()
   end
-  Bridge.sync(console, commandsPath, statusPath)
+end
+
+local function preparePlayback(session, text)
+  local limit = Session.capacity(session)
+  local script = Inputs.parse(text, limit)
+  local ids = {}
+  for id in pairs(script.names) do ids[#ids + 1] = id end
+  for id, steps in pairs(script.steps) do
+    if not script.names[id] and #steps > 0 then ids[#ids + 1] = id end
+  end
+  table.sort(ids)
+
+  -- Resolve all names and reservations before publishing any new member.
+  local prospective = { maxPlayers = limit, slots = {} }
+  for id, slot in pairs(session.slots) do
+    prospective.slots[id] = { name = slot.name, connected = slot.connected }
+  end
+  for _, id in ipairs(ids) do
+    local slot = session.slots[id]
+    local name = script.names[id] or (slot and slot.name) or ("P" .. id)
+    local joined, reason = Session.join(prospective, name, id)
+    if joined ~= id then return nil, "seat " .. id .. ": " .. tostring(reason) end
+  end
+  for _, id in ipairs(ids) do
+    if not session.slots[id] then Session.join(session, prospective.slots[id].name, id) end
+  end
+  return script
+end
+
+function Menu.pump(control, game)
+  -- A retained pre-seat-snapshot script cannot identify its original connections.
+  if game.playing and not game.playbackSeats then
+    game.playing = false
+    game.playResult = "legacy playback stopped on reload; run play to restart"
+  end
+  game:UpdateInputOwner()
+  local console = control.console
+  local tick = (control.inputTick or 0) + 1
+  control.inputTick = tick
+  local results = Bridge.sync(console, control.commandsPath, function(playerId, state)
+    return game:SubmitInput(tick, playerId, state)
+  end, function(seat, room, reward, round, choice)
+    return game:ClaimBoon(seat, room, reward, round, choice)
+  end, function()
+    return game:KillAll()
+  end)
+  if #results > 0 then
+    control.results = results
+  end
+  local now = os.clock()
+  game:CheckEnter(now)
   if console.enterMap then
-    if Game:Enter(console.enterMap) then
+    if game:Enter(console.enterMap, now) then
       console.enterMap = nil
     end
   end
   if console.play then
     console.play = false
-    local text = readAll(inputsPath())
+    local text = readAll(control.inputsPath)
     if not text then
-      Game.enterResult = "play missing inputs"
+      game.playResult = "failed missing inputs.txt; run h2t.ps1 play"
     else
-      local script = Inputs.parse(text)
-      for slot = 2, 4 do
-        if not console.session.slots[slot] then
-          Console.execute(console, "player add " .. (script.names[slot] or ("P" .. slot)))
-        end
+      local script, reason = preparePlayback(console.session, text)
+      if script then
+        game:BeginPlayback(script)
+      else
+        game.playing, game.playResult = false, reason
       end
-      Game:BeginPlayback(script)
     end
   end
-  local now = os.clock()
   local dt = 0
-  if Menu.lastClock then
-    dt = now - Menu.lastClock
+  if control.lastClock then
+    dt = now - control.lastClock
   end
-  Menu.lastClock = now
-  Game:Install()
-  Game:RefreshBodies()
-  Game:Step(dt)
-  local report = io.open(statusPath, "ab")
-  if report then
-    report:write(Game:BodyReport() .. "\n")
-    report:close()
-  end
-end
-
-function Menu.install(session)
-  console = Console.new(session)
-  commandsPath, statusPath = controlPaths()
-  Game:SetSession(session)
-  Game:Install()
-  print("[Hades2Together] status " .. statusPath)
-  pump()
-
-  rom.gui.add_always_draw_imgui(function()
-    local ok, err = pcall(pump)
-    if not ok then
-      logOnce("control sync failed: " .. tostring(err))
-    end
-  end)
-
-  return true
+  control.lastClock = now
+  game:Install()
+  game:Step(dt, tick)
+  Menu.publish(control, game, "polling")
 end
 
 return Menu

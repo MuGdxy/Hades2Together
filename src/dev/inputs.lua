@@ -4,13 +4,20 @@
 
 local Inputs = {}
 
-local MAX_SLOT = 4
+local Messages = import("protocol/messages.lua")
+local Session = import("protocol/session.lua")
 
-function Inputs.parse(text)
+function Inputs.parse(text, maxPlayers)
   local names = {}
   local steps = {}
-  for slot = 1, MAX_SLOT do
-    steps[slot] = {}
+  if maxPlayers == nil then
+    maxPlayers = Session.MAX_PLAYERS
+    -- Preserve the original one-argument result for existing callers.
+    for slot = 1, maxPlayers do
+      steps[slot] = {}
+    end
+  else
+    assert(Session.validSeat(maxPlayers), "invalid maxPlayers")
   end
   if type(text) ~= "string" then
     return { names = names, steps = steps }
@@ -20,7 +27,7 @@ function Inputs.parse(text)
       local nameSlot, name = line:match("^%s*name%s+(%d+)%s+(.+)$")
       if nameSlot then
         local slot = tonumber(nameSlot)
-        if slot and slot >= 1 and slot <= MAX_SLOT then
+        if Session.validSeat(slot, maxPlayers) then
           names[slot] = name:gsub("%s+$", "")
         end
       else
@@ -29,9 +36,11 @@ function Inputs.parse(text)
         local mx = tonumber(mxText)
         local my = tonumber(myText)
         local dur = tonumber(durText)
-        if slot and steps[slot] and mx and my and dur and dur > 0 then
-          local list = steps[slot]
+        if Session.validSeat(slot, maxPlayers) and Messages.validAxis(mx) and Messages.validAxis(my)
+            and dur and dur > 0 and dur < math.huge then
+          local list = steps[slot] or {}
           list[#list + 1] = { mx = mx, my = my, dur = dur }
+          steps[slot] = list
         end
       end
     end
@@ -48,24 +57,11 @@ function Inputs.stick(script, slot, time)
   for index = 1, #list do
     local step = list[index]
     if time < cursor + step.dur then
-      return step.mx, step.my
+      return step.mx, step.my, true
     end
     cursor = cursor + step.dur
   end
   return 0, 0
-end
-
-function Inputs.integrate(x, y, mx, my, dt, speed)
-  local mag = math.sqrt(mx * mx + my * my)
-  if mag > 1 then
-    mx = mx / mag
-    my = my / mag
-    mag = 1
-  end
-  if mag < 0.01 then
-    return x, y, false
-  end
-  return x + mx * speed * dt, y + my * speed * dt, true
 end
 
 return Inputs

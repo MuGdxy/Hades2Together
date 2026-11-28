@@ -1,11 +1,14 @@
 ---@meta _
 ---@diagnostic disable: lowercase-global
 
--- Loads the pure layers, then the startup button and the dev command port.
--- Spawning units stays in hack/game.lua.
+-- Build the runtime module graph without registering callbacks or polling.
 
 local Session = import("protocol/session.lua")
 local Menu = import("hack/menu.lua")
+local Game = import("hack/game.lua")
+
+assert(type(Game.ObserveHeroSetup) == "function" and type(Game.InstallHubObserver) == "function",
+  "hack/game.lua is missing hub observation callbacks")
 
 import("protocol/codec.lua")
 import("protocol/messages.lua")
@@ -18,18 +21,4 @@ import("hack/engine.lua")
 import("net/loopback.lua")
 import("client/input.lua")
 
-local ok, sessionOrErr = pcall(Session.new, config.role)
-if not ok then
-  rom.log.error("[Hades2Together] " .. tostring(sessionOrErr))
-  return
-end
-
-local slot = Session.join(sessionOrErr, config.playerName or "Player")
-Menu.install(sessionOrErr)
-
-rom.log.info(string.format(
-  "[Hades2Together] control queue ready, role=%s slot=%s page=http://127.0.0.1:%s/",
-  sessionOrErr.role,
-  tostring(slot),
-  tostring(config.devPort)
-))
+return { Session = Session, Menu = Menu, Game = Game }

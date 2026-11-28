@@ -1,39 +1,56 @@
--- Live game binding. Extra players are visible bodies beside the real hero.
--- Slots 3 and 4 are not engine player slots. They are obstacles wearing Melinoe's mesh.
+-- Live game binding for the real hero and the local control queue.
 
 local Engine = import("hack/engine.lua")
+local GuestInput = import("hack/guest_input.lua")
+local GuestSplash = import("hack/guest_splash.lua")
+local HostInput = import("hack/host_input.lua")
+local HubRoom = import("hack/hub_room.lua")
+local Boon = import("gameplay/boon.lua")
+local StockBoon = import("hack/stock_boon.lua")
+local Actions = import("protocol/actions.lua")
+local Input = import("client/input.lua")
 local Inputs = import("dev/inputs.lua")
+local Messages = import("protocol/messages.lua")
+local Session = import("protocol/session.lua")
 
-local Game = {
-  bodies = {},
-  pending = {},
-  installed = false,
-}
+assert(HubRoom.name == "Hub_Main" and type(HubRoom.install) == "function"
+  and type(HubRoom.adopt) == "function" and type(HubRoom.observe) == "function",
+  "hack/hub_room.lua is incomplete")
 
-local SPEED = 540
-local OFFSETS = {
-  [2] = { 180, 40 },
-  [3] = { -180, 40 },
-  [4] = { 0, 170 },
-}
+local Game = { hostSeat = 1 } -- Default for instances retained across plugin reload.
+Game.ObserveTraitGrant = StockBoon.onGrant
+Game.GrantGuestBoon = StockBoon.grantGuest
+Game.ApplyGuestSplash = GuestSplash.apply
 
-function Game.location(id)
-  local fn = Game.gameEnv and Game.gameEnv.GetLocation or GetLocation
-  if type(fn) ~= "function" then
-    return 0, 0
-  end
-  local ok, point = pcall(fn, { Id = id })
-  if not ok or type(point) ~= "table" then
-    return 0, 0
-  end
-  return point.X or point.x or 0, point.Y or point.y or 0
+function Game.new(session, hostSeat)
+  return setmetatable({
+    session = session,
+    hostSeat = hostSeat,
+    guestBoonSeed = os.time and os.time() or math.floor(os.clock() * 1000000),
+    installed = false,
+  }, { __index = Game })
 end
 
-function Game.teleport(id, x, y)
-  if not id then
-    return
+local TEST_MAPS = { F_Test = true, F_Combat01 = true }
+local MAIN_HUB = HubRoom.name
+local ENTER_TIMEOUT = 20
+
+local function gameCall(name, args)
+  local fn = rom and rom.game[name]
+  if type(fn) ~= "function" then
+    return nil
   end
-  gameCall("Teleport", { Id = id, OffsetX = x, OffsetY = y })
+  return pcall(fn, args)
+end
+
+function Game:location(id)
+  local ok, point = gameCall("GetLocation", { Id = id })
+  if ok and type(point) == "table" then
+    local x, y = point.X or point.x, point.Y or point.y
+    if type(x) == "number" and type(y) == "number" then
+      return x, y
+    end
+  end
 end
 
 local function later(name)
@@ -42,326 +59,1105 @@ local function later(name)
   end
 end
 
-function Game:SetSession(session)
-  self.session = session
-end
-
 function Game:HeroId()
-  local env = self.gameEnv
-  local run = env and env.CurrentRun or CurrentRun
+  local run = rom and rom.game.CurrentRun
   if type(run) ~= "table" or type(run.Hero) ~= "table" then
     return nil
   end
   return run.Hero.ObjectId
 end
 
-local function gameCall(name, args)
-  local env = Game.gameEnv
-  local fn = env and env[name] or nil
-  if type(fn) ~= "function" then
-    fn = _G[name]
-  end
-  if type(fn) ~= "function" then
-    return nil
-  end
-  return pcall(fn, args)
-end
-
-function Game:BindHero(playerId, spec)
-  spec = spec or {}
-  self.pending[playerId] = spec
-  if playerId == 1 then
+function Game:BindHero(playerId)
+  if playerId == self.hostSeat then
+    local game = rom and rom.game
+    if game and (self.map or game.CurrentHubRoom) and not self:ActiveRoom(game) then return end
     return self:HeroId()
   end
-  return self:SpawnBody(playerId, spec)
+  local unit = self:BoundGuestUnit(playerId)
+  return unit and unit.ObjectId
 end
 
-function Game:PlaceBody(body, heroId)
-  local offset = body.offset or { 0, 0 }
-  gameCall("Teleport", {
-    Id = body.id,
-    DestinationId = heroId,
-    OffsetX = offset[1],
-    OffsetY = offset[2],
-  })
-  if body.labelId then
-    gameCall("Teleport", {
-      Id = body.labelId,
-      DestinationId = heroId,
-      OffsetX = offset[1],
-      OffsetY = offset[2],
-    })
+function Game:BoundGuestUnit(playerId)
+  if playerId == self.hostSeat then return end
+  local state = GuestInput.states(self)[playerId]
+  if not state or not state.actor then return end
+  local game = rom.game
+  local room = self:ActiveRoom(game)
+  local run = game.CurrentRun
+  if not room or room ~= state.room or run.Hero ~= state.hero
+      or not game.SessionState or game.SessionState.MapLoads ~= state.load then return end
+  local bound = GuestInput.actor(rom.data, playerId)
+  if bound and bound.id == state.id and bound.actor == state.actor and bound.load == state.load
+    and state.actor.ObjectId == state.id and state.actor ~= run.Hero then
+    return state.actor
   end
 end
 
-function Game:SpawnBody(playerId, spec)
-  local spawn = Game.gameEnv and Game.gameEnv.SpawnObstacle or SpawnObstacle
-  if type(spawn) ~= "function" then
-    return nil
-  end
-  local heroId = self:HeroId()
-  if not heroId then
-    return nil
-  end
-  local existing = self.bodies[playerId]
-  if existing and existing.id then
-    return existing.id
-  end
-
-  local id = spawn({
-    Name = "BlankObstacle3D",
-    Group = "Standing",
-    DestinationId = heroId,
-  })
-  if not id then
-    return nil
-  end
-
-  local body = {
-    id = id,
-    name = spec.name,
-    offset = OFFSETS[playerId] or { 180, 0 },
-  }
-  self.bodies[playerId] = body
-  gameCall("SetThingProperty", { Property = "GrannyModel", Value = "Melinoe_Mesh", DestinationId = id })
-  gameCall("SetThingProperty", { Property = "Graphic", Value = "MelinoeIdle", DestinationId = id })
-  gameCall("SetThingProperty", { Property = "Material", Value = "Unlit", DestinationId = id })
-  gameCall("SetScale", { Id = id, Fraction = 0.7 })
-  gameCall("SetAnimation", { Name = "MelinoeIdle", DestinationId = id })
-  body.anim = "idle"
-
-  local labelId = spawn({
-    Name = "BlankObstacle",
-    Group = "Standing",
-    DestinationId = heroId,
-  })
-  body.labelId = labelId
-  if labelId then
-    gameCall("CreateTextBox", {
-      Id = labelId,
-      Text = spec.name or ("P" .. tostring(playerId)),
-      OffsetY = -180,
-      FontSize = 22,
-      Color = { 1, 1, 1, 1 },
-      Font = "LatoMedium",
-      Justification = "Center",
-    })
-  end
-  self:PlaceBody(body, heroId)
-  local hx, hy = Game.location(heroId)
-  body.x = hx + body.offset[1]
-  body.y = hy + body.offset[2]
-  Game.teleport(id, body.x, body.y)
-  if body.labelId then
-    Game.teleport(body.labelId, body.x, body.y)
-  end
-  print("[Hades2Together] spawned seat " .. tostring(playerId) .. " " .. tostring(spec.name))
-  return id
+local function finite(value)
+  return type(value) == "number" and value == value and math.abs(value) < math.huge
 end
 
-function Game:DropBody(playerId)
-  local body = self.bodies[playerId]
-  self.pending[playerId] = nil
-  if not body then
+local function stockName(value)
+  return type(value) == "string" and #value > 0 and #value <= 128 and not value:find("%c")
+end
+
+local function stockId(value)
+  return Messages.validTick(value) and value > 0
+end
+
+local function readExits(map)
+  if type(map) ~= "table" or type(map.OfferedExitDoors) ~= "table" then
+    return nil
+  end
+  local exits = {}
+  for id, door in pairs(map.OfferedExitDoors) do
+    if stockId(id) and type(door) == "table" and door.ObjectId == id then
+      local ok, exists = gameCall("IdExists", { Id = id })
+      if not ok or type(exists) ~= "boolean" then
+        return nil
+      end
+      if exists then
+        local destination = type(door.Room) == "table" and door.Room.Name
+        exits[#exits + 1] = {
+          id = id, readyToUse = door.ReadyToUse == true, inUse = door.InUse == true,
+          destination = stockName(destination) and destination or nil,
+        }
+      end
+    end
+  end
+  table.sort(exits, function(a, b) return a.id < b.id end)
+  return exits
+end
+
+local function readAnchoredReward(game, room, encounter, drop)
+  local map = game.MapState
+  local point
+  if encounter.Name == "HealthRestore" then
+    point = room.SpawnRewardOnId
+  elseif drop and drop.encounter == encounter then
+    point = drop.point
+  end
+  if not stockId(point) or type(map) ~= "table" or type(map.RewardPointsUsed) ~= "table"
+    or type(map.RoomRequiredObjects) ~= "table" then
+    return nil
+  end
+  local id = map.RewardPointsUsed[point]
+  if not stockId(id) then
+    return nil
+  end
+  local reward = map.RoomRequiredObjects[id]
+  if encounter.Name ~= "HealthRestore" and reward ~= drop.source then return end
+  if type(reward) ~= "table" or reward.ObjectId ~= id
+    or reward.SpawnPointId ~= nil or not stockName(reward.Name) then
+    return nil
+  end
+  -- Store kit placement also writes RewardPointsUsed. Require the original
+  -- object registered as required loot or a free stock room consumable.
+  local loot = type(game.LootObjects) == "table" and game.LootObjects[id] == reward
+  local consumable = type(map.ActiveObstacles) == "table" and map.ActiveObstacles[id] == reward
+  if loot == consumable then
+    return nil
+  end
+  if consumable and (reward.IgnorePurchase ~= true or reward.PurchaseRequirements ~= nil) then
+    return nil
+  end
+  local args = { Id = id }
+  local found, exists = gameCall("IdExists", args)
+  if not found or exists ~= true then
+    return nil
+  end
+  local useRead, useable = gameCall("IsUseable", args)
+  if not useRead or useable ~= true then
+    return nil
+  end
+  local nameRead, name = gameCall("GetName", args)
+  if nameRead and name == reward.Name then
+    return reward, point
+  end
+end
+
+function Game:LoadedRoom(room)
+  local game = rom.game
+  if self.map == MAIN_HUB and room == game.CurrentHubRoom then self:TrackHubRoom() end
+  local load = self.roomLoad
+  local mapState = game.SessionMapState
+  -- LeaveRoom can assign the next room before the old map stops updating.
+  if not room or not load or load.room ~= room or load.name ~= room.Name
+    or type(game.SessionState) ~= "table" or load.generation ~= game.SessionState.MapLoads
+    or type(mapState) ~= "table" or load.mapState ~= mapState or mapState.DeferredObstacleInitializationFinished ~= true then
+    return nil
+  end
+  if load.name == MAIN_HUB then
+    local observation = hubRoomObservation or self.hubObservation
+    local setup = observation and observation.setup
+    local run = game.CurrentRun
+    if not setup or room ~= game.CurrentHubRoom or setup.run ~= run
+      or setup.hero ~= run.Hero or setup.id ~= run.Hero.ObjectId then return nil end
+    local ok, exists = gameCall("IdExists", { Id = setup.id })
+    if not ok or exists ~= true then return nil end
+  end
+  return load
+end
+
+function Game:ActiveRoom(game)
+  local run = game and game.CurrentRun
+  if type(run) ~= "table" then return end
+  if self.map == MAIN_HUB then
+    local room = game.CurrentHubRoom
+    if self:LoadedRoom(room) then return room end
     return
   end
-  if type(Destroy) == "function" or (self.gameEnv and type(self.gameEnv.Destroy) == "function") then
-    gameCall("Destroy", { Id = body.id })
-    if body.labelId then
-      gameCall("Destroy", { Id = body.labelId })
-    end
+  local room = run.CurrentRoom
+  if type(room) ~= "table" then return end
+  if self.map then
+    local load = self.roomLoad
+    if not load or load.room ~= room or load.name ~= self.map or load.name ~= room.Name
+      or not game.SessionState or load.generation ~= game.SessionState.MapLoads
+      or load.mapState ~= game.SessionMapState then return end
+  elseif game.CurrentHubRoom then
+    return -- Wait for the load notification if the stock hub setup ran first.
   end
-  self.bodies[playerId] = nil
+  return room
 end
 
-if type(rom) == "table" and type(rom.on_import) == "table" and type(rom.on_import.pre) == "function" then
-  rom.on_import.pre(function(a, b)
-    if not Game.loggedHook then
-      Game.loggedHook = true
-      local g = rawget(_G, "LoadMap")
-      print("[Hades2Together] import pre args " .. type(a) .. " " .. type(b)
-        .. " _G.LoadMap=" .. type(_G.LoadMap)
-        .. " raw=" .. type(g))
+local function projectOptions(roomId, reward, claim, menu)
+  if claim.state == "consumed" then return end
+  for _, option in ipairs(claim.options or {}) do
+    local round = menu and menu.buttons[option] and menu.round or StockBoon.guestGrantRound(reward, claim.playerId, option)
+    if round then
+      if not claim.grantOptions then
+        claim.opportunity = table.concat({ roomId, reward.id, round }, "/")
+        claim.grantOptions, claim.grantOption = {}, option
+      end
+      claim.grantOptions[#claim.grantOptions + 1] = option
+      -- Existing single-option clients can still pick their original weapon boon.
+      if option == "PoseidonWeaponBoon" then claim.grantOption = option end
     end
-    local env = type(a) == "table" and a or (type(b) == "table" and b or nil)
-    if type(env) == "table" then
-      Game.gameEnv = env
-    elseif type(_G.LoadMap) == "function" then
-      Game.gameEnv = _G
-    end
-  end)
-end
-
-local function resolveLoadMap()
-  local env = Game.gameEnv
-  if type(env) == "table" and type(env.LoadMap) == "function" then
-    return env.LoadMap
-  end
-  if type(LoadMap) == "function" then
-    return LoadMap
   end
 end
 
-function Game:Enter(mapName)
-  local loadMap = resolveLoadMap()
-  if not loadMap then
-    if not self.loggedLoadMap then
-      self.loggedLoadMap = true
-      print("[Hades2Together] LoadMap missing, gameEnv=" .. type(self.gameEnv))
-    end
-    self.enterResult = "waiting"
-    return false
+local function readRoom(self, game, room, rewardsOnly)
+  local load = self:LoadedRoom(room)
+  if not load then return nil end
+  if not load.id then
+    self.roomSerial = (self.roomSerial or 0) + 1
+    load.id = self.roomSerial
   end
-  local ok, err = pcall(function()
-    loadMap({ Name = mapName })
-  end)
-  if ok then
-    self.enterResult = "requested " .. mapName
-    print("[Hades2Together] enter " .. mapName)
+  local view = {
+    id = load.id, name = load.name,
+    leaving = room.Leaving == true, exitsUnlocked = room.ExitsUnlocked == true,
+  }
+  if load.name == MAIN_HUB then return view end
+  if not rewardsOnly then view.exits = readExits(game.MapState) end
+  local visibleReward
+  local encounter = room.Encounter
+  if type(encounter) == "table" and stockName(encounter.Name) then
+    local reward, point = readAnchoredReward(game, room, encounter, load.encounterDrop)
+    local hasCompletion = type(encounter.Completed) == "boolean"
+    local id = load.encounters[encounter]
+    if not id and (hasCompletion or reward) then
+      load.encounterSerial = load.encounterSerial + 1
+      id = load.encounterSerial
+      load.encounters[encounter] = id
+    end
+    if hasCompletion then
+      view.encounter = { id = id, name = encounter.Name, completed = encounter.Completed }
+    end
+    if reward then
+      load.offers = load.offers or {}
+      local offerId = load.offers[reward]
+      local firstObservation = offerId == nil
+      if firstObservation then
+        load.offerSerial = (load.offerSerial or 0) + 1
+        offerId = load.offerSerial
+        load.offers[reward] = offerId
+      end
+      if reward.Name == "PoseidonUpgrade" and game.LootObjects and game.LootObjects[reward.ObjectId] == reward then
+        if not load.boonOffer or load.boonOffer.source ~= reward or load.boonOffer.encounter ~= encounter then
+          load.boonOffer = { source = reward, objectId = reward.ObjectId, encounter = encounter,
+            id = offerId, encounterId = id, point = encounter.Name ~= "HealthRestore" and point or nil }
+          if firstObservation then StockBoon.openGuests(self, game, load) end
+        end
+      end
+      visibleReward = { id = offerId, encounterId = id, objectId = reward.ObjectId, kind = reward.Name }
+      if not rewardsOnly then
+        local x, y = self:location(reward.ObjectId)
+        if finite(x) and finite(y) then visibleReward.x, visibleReward.y = x, y end
+        if game.SessionMapState then
+          local target = game.SessionMapState.ActiveUseTarget
+          visibleReward.hostUseTarget = type(target) == "table" and target.ObjectId == reward.ObjectId
+        end
+      end
+    end
+  end
+  -- Link a visible offer retained across reload before projecting each receipt.
+  if self.session and Session.isAuthority(self.session) then StockBoon.reward(load) end
+  for _, receipt in ipairs(load.boonClaims or {}) do
+    local available, hostOffer = StockBoon.readOptions(self, game, load, receipt)
+    local menu = hostOffer and StockBoon.hostMenu(self, game, hostOffer)
+    local claims = Boon.claims(receipt, not available)
+    if #claims > 0 then
+      if available then
+        for _, claim in ipairs(claims) do
+          projectOptions(view.id, receipt, claim, claim.playerId == self.hostSeat and menu)
+        end
+      end
+      local row = { id = receipt.id, kind = receipt.kind, encounterId = receipt.encounterId, claims = claims }
+      if visibleReward and visibleReward.id == row.id then
+        row.x, row.y, row.hostUseTarget = visibleReward.x, visibleReward.y, visibleReward.hostUseTarget
+        row.objectId, visibleReward = visibleReward.objectId, nil
+      end
+      view.rewards = view.rewards or {}
+      view.rewards[#view.rewards + 1] = row
+    end
+  end
+  if visibleReward then
+    view.rewards = view.rewards or {}
+    view.rewards[#view.rewards + 1] = visibleReward
+  end
+  return view
+end
+
+-- Authority intent only. The caller supplies the authenticated seat; only an
+-- independently observed grant can turn this selection into a consumed claim.
+function Game:SelectBoon(roomId, rewardId, seat, choice, round)
+  local run = rom.game.CurrentRun
+  local load = run and self:LoadedRoom(run.CurrentRoom)
+  if not self.session or not Session.isAuthority(self.session) or not load or load.id ~= roomId then return nil end
+  local slot = self.session.slots[seat]
+  if not slot or not slot.connected then return nil end
+  local reward = StockBoon.reward(load, rewardId)
+  if not reward or reward.id ~= rewardId or not StockBoon.readOptions(self, rom.game, load, reward) then return nil end
+  if round ~= nil then
+    if StockBoon.guestGrantRound(reward, seat, choice) ~= round then return nil end
+    local entry = reward.seats and reward.seats[seat]
+    if entry and entry.consumed == choice then
+      local member = reward.guests[seat]
+      if entry.slot == slot and self:BoundGuestUnit(seat) == member.unit then return entry.grantedSelection end
+      return nil
+    end
+  end
+  local selection = Boon.select(self.session, reward, seat, self:BindHero(seat), choice)
+  local member = selection and reward.guests and reward.guests[seat]
+  if member then
+    local roll = member.rolls[member.round]
+    -- Pre-upgrade rolls contain weights only. Never redraw an existing item.
+    local rarity = roll.rarities and roll.rarities[choice]
+    if rarity then
+      return selection, { Type = "Trait", ItemName = choice, Rarity = rarity }
+    end
+  end
+  return selection
+end
+
+function Game:ClaimGuestBoon(seat, room, reward, round, choice)
+  local selection = self:SelectBoon(room, reward, seat, choice, round)
+  if not selection then return nil, "option unavailable for this seat or opportunity" end
+  return self:GrantGuestBoon(room, reward, seat, selection)
+end
+
+function Game:ClaimBoon(seat, room, reward, round, choice)
+  if seat == self.hostSeat then return StockBoon.chooseHost(self, seat, room, reward, round, choice) end
+  return self:ClaimGuestBoon(seat, room, reward, round, choice)
+end
+
+function Game:RoomRewards()
+  local g = rom.game
+  local room = g.CurrentRun and g.CurrentRun.CurrentRoom
+  if not room or not ((room.Encounter and room.Encounter.Name == "HealthRestore")
+    or (self.roomLoad and (self.roomLoad.encounterDrop or self.roomLoad.boonClaims))) then return end
+  local view = readRoom(self, g, room, true)
+  return view and view.rewards
+end
+
+local function readActor(self, unit, ignoreRunDeath)
+  if type(unit) ~= "table" then
+    return nil
+  end
+  local id, hp, maxHp = unit.ObjectId, unit.Health, unit.MaxHealth
+  if not finite(id) or id <= 0 or id % 1 ~= 0
+      or not finite(hp) or hp < 0 or not finite(maxHp) or maxHp <= 0 then
+    return nil
+  end
+
+  local args = { Id = id }
+  local nameRead, kind = gameCall("GetName", args)
+  local lifeRead, alive = gameCall("IsAlive", args)
+  local x, y = self:location(id)
+  if not nameRead or type(kind) ~= "string" or kind == "" or not lifeRead
+      or type(alive) ~= "boolean" or not finite(x) or not finite(y) then
+    return nil
+  end
+  local facingRead, facing = gameCall("GetAngle", args)
+  return {
+    id = id, kind = kind, x = x, y = y, hp = hp, maxHp = maxHp,
+    alive = alive and (ignoreRunDeath or not unit.IsDead),
+    facing = facingRead and finite(facing) and facing or nil,
+  }
+end
+
+local function appendHero(game, heroes, unit, seat, slot, ignoreRunDeath)
+  local actor = readActor(game, unit, ignoreRunDeath)
+  if actor then
+    actor.heldBoons = StockBoon.readHeld(unit)
+    actor.playerId = seat
+    if slot then actor.connected = slot.connected end
+    heroes[#heroes + 1] = actor
+  end
+end
+
+-- The local roster can have a native id pending attachment. Record verified
+-- bindings separately when requested, even if health/position is unavailable.
+function Game:ReadHeroes(boundIds)
+  local heroes = {}
+  local game = rom and rom.game
+  local room = self:ActiveRoom(game)
+  if not room then return heroes end
+  local run = game.CurrentRun
+  local slots = self.session and self.session.slots
+  local host = slots and slots[self.hostSeat]
+  if boundIds and host and run.Hero then boundIds[self.hostSeat] = run.Hero.ObjectId end
+  appendHero(self, heroes, run.Hero, host and self.hostSeat, host, room.Name == MAIN_HUB)
+
+  local native = rom.data
+  local states = GuestInput.states(self)
+  local seats
+  if self.session then
+    seats = GuestInput.seats(self.hostSeat, self.session.slots)
+  elseif native and native.h2t_guest_seats then
+    seats = native.h2t_guest_seats()
+    table.sort(seats)
   else
-    self.enterResult = "failed " .. tostring(err)
-    print("[Hades2Together] enter failed: " .. tostring(err))
+    seats = { 2 } -- The legacy observer DLL can publish a single guest.
+  end
+  for _, seat in ipairs(seats) do
+    local state = states[seat]
+    if self.session and Session.isAuthority(self.session) then
+      if state and state.session == self.session and state.slot == slots[seat] then
+        local unit = self:BoundGuestUnit(seat)
+        if boundIds and unit then boundIds[seat] = unit.ObjectId end
+        appendHero(self, heroes, unit, seat, state.slot)
+      end
+    elseif not state or (state.room == room and state.hero == run.Hero) then
+      local guest = GuestInput.actor(native, seat)
+      if guest and guest.actor and guest.actor.ObjectId == guest.id and game.SessionState
+          and guest.load == game.SessionState.MapLoads then
+        appendHero(self, heroes, guest.actor, seat, slots and slots[seat])
+      end
+    end
+  end
+  return heroes
+end
+
+local function activeEnemy(activeEnemies, id)
+  local unit = activeEnemies[id]
+  if type(unit) == "table" and unit.ObjectId == id and not unit.IsDead then return unit end
+end
+
+function Game:ReadActors()
+  local actors = { heroes = self:ReadHeroes(), enemies = {} }
+  local game = rom and rom.game
+  local room = self:ActiveRoom(game)
+  if not room then return actors end
+  actors.room = readRoom(self, game, room)
+  if room.Name == MAIN_HUB then return actors end
+  local activeEnemies = game.ActiveEnemies
+  local teamRead, teamIds = gameCall("GetIds", { Name = "EnemyTeam" })
+  if type(activeEnemies) ~= "table" or not teamRead or type(teamIds) ~= "table" then
+    return actors
+  end
+  local seen = {}
+  local heroId = self:HeroId()
+  for _, id in ipairs(teamIds) do
+    if finite(id) and not seen[id] and id ~= heroId then
+      seen[id] = true
+      local unit = activeEnemy(activeEnemies, id)
+      if unit then
+        local enemy = readActor(self, unit)
+        if enemy and enemy.alive then
+          actors.enemies[#actors.enemies + 1] = enemy
+        end
+      end
+    end
+  end
+  table.sort(actors.enemies, function(a, b) return a.id < b.id end)
+  return actors
+end
+
+local function killWorld(self)
+  local g = rom.game
+  local room = self:ActiveRoom(g)
+  local load = room and self:LoadedRoom(room)
+  local run = g.CurrentRun
+  local hero = run and run.Hero
+  if not load or room.Leaving or load.mapState.HandlingDeath or self.enterRequest
+    or (g.CurrentHubRoom or run.CurrentRoom) ~= room or not stockName(room.Name)
+    or type(room.Kills) ~= "table" or type(room.ActiveEncounters) ~= "table"
+    or type(g.ActiveEnemies) ~= "table" or type(g.MapState) ~= "table"
+    or type(hero) ~= "table" or not stockId(hero.ObjectId) or not self:PrimaryAlive(room, hero) then return end
+  local ok, alive = gameCall("IsAlive", { Id = hero.ObjectId })
+  if ok and alive == true then
+    return { load = load, run = run, hero = hero, heroId = hero.ObjectId, map = g.MapState, enemies = g.ActiveEnemies }
+  end
+end
+
+local function sameKillWorld(self, world)
+  local g = rom.game
+  local load, room = world.load, world.load.room
+  return self.roomLoad == load and self.map == load.name and not self.enterRequest
+    and g.CurrentRun == world.run and world.run.Hero == world.hero and world.hero.ObjectId == world.heroId
+    and (room.Name == MAIN_HUB or not world.hero.IsDead)
+    and (g.CurrentHubRoom or world.run.CurrentRoom) == room and not room.Leaving
+    and g.SessionState and g.SessionState.MapLoads == load.generation
+    and g.SessionMapState == load.mapState and load.mapState.DeferredObstacleInitializationFinished == true
+    and not load.mapState.HandlingDeath and g.MapState == world.map and g.ActiveEnemies == world.enemies
+end
+
+local function groupIds(name)
+  local ok, ids = gameCall("GetIds", { Name = name })
+  if not ok or type(ids) ~= "table" then return end
+  local members = {}
+  for _, id in ipairs(ids) do
+    if stockId(id) then members[id] = true end
+  end
+  return members
+end
+
+local function killTarget(self, world, id, unit)
+  if not unit or unit == world.hero or id == world.heroId or unit.Charmed or unit.AlwaysTraitor
+    or unit.TrainingTarget or not stockName(unit.Name) or unit.Name:match("^NPC_") then return false end
+  for _, group in ipairs(unit.Groups or {}) do
+    if group == "HeroTeam" or group == "NPCs" or group == "Summons" then return false end
+  end
+  local states = GuestInput.states(self)
+  for _, seat in ipairs(GuestInput.seats(self.hostSeat, self.session.slots, states)) do
+    local state = states[seat]
+    if state and state.room == world.load.room and state.load == world.load.generation
+      and (state.id == id or state.actor == unit) then return false end
+    local guest = GuestInput.actor(rom.data, seat)
+    if guest and guest.load == world.load.generation and (guest.id == id or guest.actor == unit) then return false end
+  end
+  local args = { Id = id }
+  local existsRead, exists = gameCall("IdExists", args)
+  if not existsRead or type(exists) ~= "boolean" then return nil, "cannot read enemy existence" end
+  if not exists then return false end
+  local nameRead, name = gameCall("GetName", args)
+  local aliveRead, alive = gameCall("IsAlive", args)
+  local charmRead, charmed = gameCall("IsCharmed", args)
+  if not nameRead or not stockName(name) or not aliveRead or type(alive) ~= "boolean"
+    or not charmRead or type(charmed) ~= "boolean" then return nil, "cannot verify live enemy identity or allegiance" end
+  return name == unit.Name and alive and not charmed
+end
+
+local function settleKill(request, outcome, reason)
+  if request.pending == 0 then return end
+  request.pending = request.pending - 1
+  request[outcome] = request[outcome] + 1
+  request.reason = request.reason or reason
+end
+
+function Game:KillAll()
+  if not self.session or not Session.isAuthority(self.session) then return nil, "requires local authority" end
+  local prior = self:KillAllReceipt()
+  if prior and prior.pending > 0 then return nil, "request=" .. prior.id .. " still scheduled" end
+  local g = rom.game
+  local schedule, kill = g.thread, g.Kill
+  if type(schedule) ~= "function" or type(kill) ~= "function" then return nil, "stock Kill or scheduler unavailable" end
+  local world = killWorld(self)
+  if not world then return nil, "wait for a loaded room and live hero" end
+  local members, heroes = groupIds("EnemyTeam"), groupIds("HeroTeam")
+  if not members or not heroes then return nil, "cannot read EnemyTeam or HeroTeam" end
+  local targets = {}
+  for id in pairs(members) do
+    local unit = not heroes[id] and activeEnemy(world.enemies, id)
+    local eligible, reason = killTarget(self, world, id, unit)
+    if eligible == nil then return nil, reason .. " id=" .. id end
+    if eligible then targets[#targets + 1] = { id = id, unit = unit } end
+  end
+  table.sort(targets, function(a, b) return a.id < b.id end)
+  local request = { id = prior and prior.id + 1 or 1, room = world.load.name,
+    total = #targets, pending = #targets, completed = 0, skipped = 0, failed = 0, canceled = 0, world = world }
+  self.killAllRequest = request
+
+  -- Stock thread starts immediately and retains a coroutine when Kill yields.
+  -- Schedule from the fixed snapshot because even its first resume can change ActiveEnemies.
+  for _, target in ipairs(targets) do
+    local ok = pcall(schedule, function()
+      if request.pending == 0 then return end
+      if not sameKillWorld(self, world) then
+        settleKill(request, "canceled", "room changed or became unavailable")
+        return
+      end
+      local team, currentHeroes = groupIds("EnemyTeam"), groupIds("HeroTeam")
+      if not team or not currentHeroes then
+        settleKill(request, "failed", "cannot re-read EnemyTeam or HeroTeam")
+        return
+      end
+      if not team[target.id] or currentHeroes[target.id] or activeEnemy(world.enemies, target.id) ~= target.unit then
+        settleKill(request, "skipped")
+        return
+      end
+      local eligible, reason = killTarget(self, world, target.id, target.unit)
+      if eligible == nil then
+        settleKill(request, "failed", reason .. " id=" .. target.id)
+        return
+      end
+      if not eligible then
+        settleKill(request, "skipped")
+        return
+      end
+      -- Preserve the stock victim's presentation identity and body-retention flag.
+      local returned, err = pcall(kill, target.unit, { triggeredById = target.id, SkipDestroy = target.unit.SkipDestroy })
+      if returned then
+        settleKill(request, "completed")
+      else
+        local detail = tostring(err):gsub("%c", " "):sub(1, 200)
+        settleKill(request, "failed", "stock Kill failed id=" .. target.id .. " " .. detail)
+      end
+    end)
+    if not ok then settleKill(request, "failed", "stock scheduler failed id=" .. target.id) end
+  end
+  return request.id
+end
+
+function Game:KillAllReceipt()
+  local request = self.killAllRequest
+  if not request then return end
+  if request.pending > 0 and not sameKillWorld(self, request.world) then
+    request.canceled = request.canceled + request.pending
+    request.pending = 0
+    request.reason = request.reason or "room changed before stock Kill returned"
+  end
+  if request.pending == 0 then request.world = nil end
+  local state = "completed"
+  if request.pending > 0 then
+    state = "scheduled"
+  elseif request.failed + request.canceled > 0 then
+    state = "failed"
+  elseif request.total == 0 then
+    state = "empty"
+  end
+  return { id = request.id, room = request.room, total = request.total, pending = request.pending,
+    completed = request.completed, skipped = request.skipped, failed = request.failed, canceled = request.canceled,
+    reason = request.reason, state = state }
+end
+
+local function held(readControl, name)
+  return readControl({ Name = name }) and 1 or 0
+end
+
+function Game:ReadLocalInput()
+  local game = rom and rom.game
+  local readControl = game and game.IsControlDown
+  if type(readControl) ~= "function" then
+    return nil, "native control readback is unavailable"
+  end
+  if not self:HeroId() then
+    return nil, "local hero is unavailable"
+  end
+
+  return {
+    moveX = held(readControl, "Right") - held(readControl, "Left"),
+    moveY = held(readControl, "Down") - held(readControl, "Up"),
+    buttons = held(readControl, "Attack1") * Actions.bit("Attack1")
+      + held(readControl, "Attack2") * Actions.bit("Attack2"),
+  }
+end
+
+function Game:PushInput(playerId, frame)
+  local guest = playerId ~= self.hostSeat and rom and GuestInput.supports(rom.data, playerId)
+  if playerId ~= self.hostSeat and not guest then
+    return false, "seat " .. tostring(playerId) .. " has no native player input slot"
+  end
+  if not rom or not rom.data or not rom.data.h2t_active_submit then
+    return false, "the retail Lua API cannot submit native player movement"
+  end
+  if not self.session or not Messages.validInput(frame, Session.capacity(self.session)) or frame.playerId ~= playerId then
+    return false, "invalid input frame for host seat"
+  end
+  if guest then return GuestInput.submit(self, frame) end
+  return HostInput.submit(self, frame)
+end
+
+function Game:InputOwner()
+  if not self.session or not Session.isAuthority(self.session) then return end
+  local g = rom.game
+  local run = g.CurrentRun
+  local hero, room = run and run.Hero, self:ActiveRoom(g)
+  local load = g.SessionState and g.SessionState.MapLoads
+  local slot = self.session.slots[self.hostSeat]
+  if slot and room and not room.Leaving and hero
+      and type(hero.ObjectId) == "number" and hero.ObjectId > 0
+      and stockId(load) then
+    local ok, allowSave = gameCall("GetConfigOptionValue", { Name = "AllowSaveLoad" })
+    if ok and allowSave == false then return slot, room, hero, load end
+  end
+end
+
+function Game:PrimaryAlive(room, hero)
+  -- The stock return to the hub keeps the ended run's IsDead flag.
+  if room.Name ~= MAIN_HUB then return not hero.IsDead end
+  local ok, alive = gameCall("IsAlive", { Id = hero.ObjectId })
+  return ok and alive == true
+end
+
+function Game:InputAllowed()
+  local ok, allowed = gameCall("IsInputAllowed", {})
+  return ok and allowed == true
+end
+
+function Game:GuestSpawnPoint(hero, joining)
+  local g = rom.game
+  local occupied = {}
+  local room = joining and joining.room or self:ActiveRoom(g)
+  local load = joining and joining.load or (g.SessionState and g.SessionState.MapLoads)
+  local function occupy(id)
+    if not g.IdExists({ Id = id }) then return false end
+    local x, y = self:location(id)
+    if not finite(x) or not finite(y) then return false end
+    occupied[x] = occupied[x] or {}
+    occupied[x][y] = true
+    return true
+  end
+  if not occupy(hero) then return end
+  for _, guest in pairs(GuestInput.states(self)) do
+    if guest ~= joining and guest.room == room and guest.load == load then
+      -- Include offline actors and joins queued for the same native input return.
+      local id = guest.id or guest.pendingSpawn
+      if id and not occupy(id) then return end
+    end
+  end
+  local function usable(point)
+    if not stockId(point) or not g.IdExists({ Id = point }) then return false end
+    local x, y = self:location(point)
+    return finite(x) and finite(y) and not (occupied[x] and occupied[x][y])
+      and g.IsLocationBlocked({ Id=point, CheckUnits=true }) == false
+  end
+  local id = g.GetClosest({ Id = hero, DestinationName = "SpawnPoints", RequiredLocationUnblocked = true })
+  if usable(id) then return id end
+  local available = {}
+  for _, point in ipairs(g.GetIds({ Name = "SpawnPoints" }) or {}) do
+    if point ~= id and usable(point) then available[#available + 1] = point end
+  end
+  if #available > 0 then
+    local closest = g.GetClosest({ Id = hero, DestinationIds = available })
+    for _, point in ipairs(available) do
+      if point == closest then return point end
+    end
+  end
+end
+
+function Game:EquipGuestStaff(state)
+  local g, native = rom.game, state.native
+  if not native or not native.h2t_guest_equip_staff then return "guest weapon binding unavailable" end
+  local actor = self:BoundGuestUnit(state.seatId)
+  if not actor or not actor.Weapons or not actor.Weapons.WeaponStaffSwing then return "guest has no default staff" end
+  local sets = g.WeaponSets and g.WeaponSets.HeroWeaponSets
+  if not sets or not sets.WeaponStaffSwing then return "stock staff set unavailable" end
+  local function equip()
+    return native.h2t_guest_equip_staff(state.seatId, state.load, state.publication, actor.ObjectId, sets.WeaponStaffSwing)
+  end
+  local status = equip()
+  if status == "staff package not loaded" then
+    g.LoadPackages({ Name="WeaponStaffSwing", IgnoreAssert=true })
+    if self:BoundGuestUnit(state.seatId) ~= actor then return "guest weapon owner changed" end
+    status = equip()
+  end
+  return status
+end
+
+-- The original Thing destructor releases its attached Lua registry reference.
+-- CreateNewHero's explicit weapon argument initializes this table locally.
+function Game:EnsureGuestActor(state)
+  local binding = GuestInput.actor(state.native, state.seatId)
+  if not binding or binding.id ~= state.id or binding.load ~= state.load then return false end
+  if binding.empty and not state.attachAttempted then
+    local g = rom.game
+    if type(g.HeroData) ~= "table" or not stockName(g.HeroData.DefaultWeapon) then return false end
+    state.attachAttempted = true
+    local actor = g.CreateNewHero(nil, { WeaponName = g.HeroData.DefaultWeapon })
+    if type(actor) ~= "table" or actor.ObjectId ~= nil or actor == state.hero then return false end
+    actor.ObjectId = state.id
+    local players = StockBoon.runHoldings(self, g.CurrentRun)
+    local restored, reason
+    if players[state.slot] then
+      restored, reason = StockBoon.restoreGuest(self, g, state, actor, players[state.slot])
+      if not restored then
+        state.attachError = "guest boon restore: " .. reason
+        return false, state.attachError
+      end
+    end
+    g.AttachLua({ Id = state.id, Table = actor })
+    binding = GuestInput.actor(state.native, state.seatId)
+    if not binding or binding.actor ~= actor or binding.id ~= state.id or binding.load ~= state.load then return false end
+    state.actor = actor
+    if restored then players[state.slot] = restored end
+  end
+  return state.actor ~= nil and binding.actor == state.actor and binding.actor.ObjectId == state.id, state.attachError
+end
+
+function Game:UpdateInputOwner()
+  if not self.guestBoonHoldings and self.roomLoad and self.roomLoad.boonClaims then
+    StockBoon.runHoldings(self, rom.game.CurrentRun)
+  end
+  HostInput.update(self, rom.data)
+  GuestInput.update(self, rom.data)
+end
+
+function Game:SubmitInput(tick, playerId, state)
+  local slot = self.session.slots[playerId]
+  if not slot or not slot.connected then
+    return false, "seat " .. playerId .. " is disconnected"
+  end
+  self.inputSequences = self.inputSequences or {}
+  local seq = (self.inputSequences[playerId] or 0) + 1
+  local frame = Input.frame(tick, playerId, state, seq)
+  if not Messages.validInput(frame, Session.capacity(self.session)) then
+    return false, "invalid sample"
+  end
+  self.inputSequences[playerId] = seq
+  local accepted, reason = self:PushInput(playerId, frame)
+  if accepted == false then
+    return false, "unsupported " .. reason
   end
   return true
 end
 
-function Game:BeginPlayback(script)
-  self.script = script
-  self.playing = true
-  self.playTime = 0
-  self.playOrigin = false
+function Game:FinishEnter(result)
+  self.enterRequest = nil
+  self.enterResult = result
 end
 
-function Game:Drive(playerId, mx, my, dt, heroId)
-  local moving
-  local id
-  local body
-  if playerId == 1 then
-    id = heroId
-    body = self.bodies[1]
-    if not body then
-      local x, y = Game.location(heroId)
-      body = { id = heroId, x = x, y = y, real = true, anim = "idle" }
-      self.bodies[1] = body
-    end
-  else
-    local slot = self.session and self.session.slots[playerId]
-    local name = slot and slot.name or ("P" .. tostring(playerId))
-    id = self:BindHero(playerId, { name = name })
-    body = self.bodies[playerId]
-  end
-  if not body or not id then
+function Game:CheckEnter(now)
+  local request = self.enterRequest
+  if not request then
     return
   end
-  if body.x == nil then
-    local hx, hy = Game.location(heroId)
-    local offset = OFFSETS[playerId] or { 0, 0 }
-    body.x = hx + offset[1]
-    body.y = hy + offset[2]
-  end
-  body.x, body.y, moving = Inputs.integrate(body.x, body.y, mx, my, dt, SPEED)
-  Game.teleport(id, body.x, body.y)
-  if body.labelId then
-    Game.teleport(body.labelId, body.x, body.y)
-  end
-  local anim = moving and "run" or "idle"
-  if body.anim ~= anim then
-    local clip = moving and "MelinoeRun" or "MelinoeIdle"
-    gameCall("SetAnimation", { Name = clip, DestinationId = id })
-    body.anim = anim
-  end
-  if moving then
-    local angle = math.atan2(my, mx) * 180 / math.pi
-    gameCall("SetAngle", { Id = id, Angle = angle })
-    gameCall("SetGoalAngle", { Id = id, Angle = angle, CompleteAngle = true })
+  if request.error then
+    self:FinishEnter("failed " .. request.error .. "; restart the game if the room did not finish loading")
+  elseif request.done and self:IsRoomReady(request.map) then
+    self:FinishEnter("ready " .. request.map)
+  elseif now >= request.deadline and not request.timedOut then
+    -- The engine may still own a suspended LoadMap coroutine.
+    request.timedOut = true
+    self.enterResult = "failed " .. request.map .. " did not finish loading; restart with /AllowSaveLoad=false"
   end
 end
 
-function Game:Step(dt)
+function Game:IsRoomReady(mapName)
+  local room = self:ActiveRoom(rom.game)
+  if not room or room.Name ~= mapName or room.Leaving
+    or (self.map and not self:LoadedRoom(room)) then return false end
+  local hero = self:HeroId()
+  return stockId(hero) and self:location(hero) ~= nil
+end
+
+function Game:Enter(mapName, now)
+  if not TEST_MAPS[mapName] then
+    self.enterResult = "failed unsupported map " .. tostring(mapName) .. "; use enter F_Test or enter F_Combat01"
+    return true
+  end
+  if self.enterRequest then
+    return true
+  end
+  local g = rom.game
+  if type(g.LoadMap) ~= "function" or type(g.thread) ~= "function"
+      or type(g.StartNewGame) ~= "function" or type(g.RoomData) ~= "table" then
+    self.enterResult = "waiting for game scripts"
+    return false
+  end
+  local room = g.RoomData[mapName]
+  local saveOptionRead, allowSave = gameCall("GetConfigOptionValue", { Name = "AllowSaveLoad" })
+  local mapPath = rom.paths.Content() .. "/Maps/" .. mapName .. ".map_text"
+  local mapFile = io.open(mapPath, "rb")
+  if mapFile then
+    mapFile:close()
+  end
+  if not room or room.GameStart or not mapFile then
+    self.enterResult = "failed " .. mapName .. " is unavailable for direct load; use packaged F_Combat01"
+  elseif not saveOptionRead or allowSave ~= false then
+    self.enterResult = "failed restart with /AllowSaveLoad=false"
+  elseif self:IsRoomReady(mapName) then
+    self.enterResult = "ready " .. mapName
+  elseif g.GameState ~= nil or g.CurrentRun ~= nil then
+    self.enterResult = "failed a run is already active; restart with /AllowSaveLoad=false"
+  else
+    local request = { map = mapName, deadline = now + ENTER_TIMEOUT }
+    self.enterRequest = request
+    self.enterResult = "loading " .. mapName
+    local ok, err = pcall(g.thread, function()
+      -- RoomLogic's direct-load path creates a fresh run during PreThingCreation.
+      -- LoadMap yields twice, so use the game's coroutine scheduler.
+      local loaded, loadError = pcall(g.LoadMap, { Name = mapName })
+      if not loaded then
+        request.error = tostring(loadError)
+        gameCall("RemoveInputBlock", { Name = "LoadMap" })
+      end
+      request.done = loaded
+    end)
+    if not ok then
+      request.error = tostring(err)
+    end
+    self:CheckEnter(now)
+  end
+  return true
+end
+
+local function playbackSeats(session, script)
+  local seats = {}
+  for id, steps in pairs(script.steps) do
+    local slot = session.slots[id]
+    if slot and slot.connected and #steps > 0 then
+      seats[#seats + 1] = { id=id, slot=slot, generation=slot.connectionGeneration or 1 }
+    end
+  end
+  table.sort(seats, function(a, b) return a.id < b.id end)
+  return seats
+end
+
+local function sameConnection(session, member)
+  local slot = session.slots[member.id]
+  return slot == member.slot and slot.connected and (slot.connectionGeneration or 1) == member.generation
+end
+
+function Game:BeginPlayback(script)
+  self.script = script
+  self.playbackSeats = playbackSeats(self.session, script)
+  self.playStarted = false
+  self.playing = true
+  self.playTime = 0
+  self.playResult = nil
+end
+
+function Game:Step(dt, tick)
+  -- Console commands can drop and replace the slot within a single pump.
+  HostInput.checkOwner(self)
+  GuestInput.check(self)
   if not self.playing or not self.script then
     return
   end
-  local heroId = self:HeroId()
-  if not heroId then
+  if not self:HeroId() then
+    self.playResult = "waiting for hero; run enter"
     return
   end
-  if dt > 0.05 then
-    dt = 0.05
+
+  if not self.playStarted then
+    -- Menu may have just reserved a new logical seat. Start its script clock
+    -- only once the original owner has completed the neutral handshake.
+    for _, member in ipairs(self.playbackSeats) do
+      if sameConnection(self.session, member) and member.id ~= self.hostSeat
+          and GuestInput.supports(rom.data, member.id) then
+        local state = GuestInput.states(self)[member.id]
+        if not state or not state.ready then
+          self.playResult = "seat " .. member.id .. ": " ..
+            ((state and state.reason) or "waiting for room owner")
+          return
+        end
+      end
+    end
+    self.playStarted = true
+    dt = 0 -- The preceding interval elapsed before this playback was ready.
   end
-  if dt < 0 then
-    dt = 0
+  self.playTime = (self.playTime or 0) + math.max(0, math.min(dt, 0.05))
+  local active = false
+  for _, member in ipairs(self.playbackSeats) do
+    local playerId = member.id
+    if sameConnection(self.session, member) then
+      local mx, my, hasStep = Inputs.stick(self.script, playerId, self.playTime)
+      local accepted, reason = self:SubmitInput(tick, playerId, { moveX = mx, moveY = my })
+      if not accepted then
+        self.playing = false
+        self.playResult = reason
+        return
+      end
+      active = active or hasStep
+    end
   end
-  self.playTime = (self.playTime or 0) + dt
-  for playerId = 1, 4 do
-    local mx, my = Inputs.stick(self.script, playerId, self.playTime)
-    self:Drive(playerId, mx, my, dt, heroId)
+  self.playing = active == true
+  self.playResult = self.playing and "running" or "finished"
+end
+
+local function positionText(self, id)
+  local x, y = self:location(id)
+  if x == nil then
+    return ":location=unavailable"
   end
+  return string.format(":x=%d:y=%d", math.floor(x), math.floor(y))
 end
 
 function Game:BodyReport()
-  local heroId = self:HeroId()
-  if not heroId then
-    local line = "bodies hero=absent"
-    if self.enterResult then
-      line = line .. " enter=" .. self.enterResult
+  local heroId = self:BindHero(self.hostSeat)
+  local parts = { "bodies hero=" .. (heroId and tostring(heroId) .. positionText(self, heroId) or "absent") }
+  if self.hostInput then
+    parts[#parts + 1] = "hostInput=" .. (self.hostInput.failure or self.hostInput.phase)
+    if heroId and self.hostInput.applied then
+      parts[#parts + 1] = "appliedSeq=" .. self.hostInput.applied
     end
-    return line
   end
-  local parts = { "bodies hero=" .. tostring(heroId) }
-  for playerId = 2, 4 do
+  if self.enterResult then
+    local readyMap = self.enterResult:match("^ready (%S+)$")
+    if not readyMap or self:IsRoomReady(readyMap) then
+      parts[#parts + 1] = "enter=" .. self.enterResult:gsub("[\r\n]+", " ")
+    end
+  end
+  if self.playResult then
+    parts[#parts + 1] = "play=" .. self.playResult
+  end
+  local room = self:ActiveRoom(rom.game)
+  local map = room and room.Name or self.map
+  if map then
+    parts[#parts + 1] = "map=" .. map
+  end
+  for _, playerId in ipairs(GuestInput.seats(self.hostSeat, self.session and self.session.slots)) do
     local slot = self.session and self.session.slots[playerId]
-    if slot and slot.connected then
-      local body = self.bodies[playerId]
-      if body and body.id then
-        parts[#parts + 1] = string.format(
-          "%d:%s:spawned=%s:x=%d:y=%d",
-          playerId,
-          tostring(slot.name),
-          tostring(body.id),
-          math.floor(body.x or 0),
-          math.floor(body.y or 0)
-        )
-      else
-        parts[#parts + 1] = playerId .. ":" .. tostring(slot.name) .. ":waiting"
-      end
+    local guest = GuestInput.states(self)[playerId]
+    if slot and guest then
+      local unit = self:BoundGuestUnit(playerId)
+      local position = unit and (" id=" .. unit.ObjectId .. positionText(self, unit.ObjectId)) or ""
+      local receipt = unit and guest.sequence and (" appliedSeq=" .. guest.sequence) or ""
+      local idle = unit and not slot.connected and guest.offlineBatch and (" offlineBatch=" .. guest.offlineBatch) or ""
+      local binding = unit and (" load=" .. guest.load .. " publication=" .. guest.publication) or ""
+      local staff = unit and guest.staffStatus and (" staff=" .. guest.staffStatus) or ""
+      parts[#parts + 1] = playerId .. ":" .. slot.name .. ":" .. (guest.reason or "pending") .. position .. receipt .. idle .. binding .. staff
+    elseif slot and slot.connected then
+      local pending = GuestInput.supports(rom.data, playerId)
+      parts[#parts + 1] = playerId .. ":" .. slot.name .. (pending and ":awaiting room owner" or ":unsupported")
     end
   end
   return table.concat(parts, " ")
 end
 
-function Game:RefreshBodies()
-  if not self.session then
+local function trackRoom(self, name, room, generation, mapState)
+  if type(room) ~= "table" or not stockName(name) or room.Name ~= name
+    or not stockId(generation) or type(mapState) ~= "table" then
+    self.roomLoad = nil
     return
   end
-  for playerId = 2, 4 do
-    local slot = self.session.slots[playerId]
-    if slot and slot.connected then
-      self:BindHero(playerId, { name = slot.name })
-    else
-      self:DropBody(playerId)
-    end
+  local load = self.roomLoad
+  if not load or load.room ~= room or load.generation ~= generation or load.mapState ~= mapState then
+    self.roomLoad = {
+      room = room, name = name, generation = generation, mapState = mapState,
+      encounters = {}, encounterSerial = 0,
+    }
   end
+end
+
+function Game:TrackHubRoom()
+  local observation = hubRoomObservation or self.hubObservation
+  if observation and observation.pending then HubRoom.adopt(observation, self) end
+  local setup = observation and observation.setup
+  -- OnAnyLoad and the stock hero setup can run in either order.
+  local confirmed = self.map == MAIN_HUB and setup and setup.generation == self.mapGeneration
+    and setup.mapState == self.mapState and setup.room == rom.game.CurrentHubRoom
+  trackRoom(self, MAIN_HUB, confirmed and setup.room, self.mapGeneration, self.mapState)
+end
+
+function Game:ObserveHeroSetup(original, room, ...)
+  return HubRoom.observe(hubRoomObservation or self.hubObservation, rom.game, original, room, ...)
 end
 
 function Game:OnMap(name)
-  if name ~= self.map then
-    self.map = name
-    self.bodies = {}
+  self:InstallHubObserver()
+  self.map = name
+  local game = rom.game
+  local run, session, mapState = game.CurrentRun, game.SessionState, game.SessionMapState
+  local generation = type(session) == "table" and session.MapLoads
+  StockBoon.runHoldings(self, run)
+  if name == MAIN_HUB then
+    self.mapGeneration, self.mapState = generation, mapState
+    self:TrackHubRoom()
+  else
+    self.mapGeneration, self.mapState = nil, nil
+    local observation = hubRoomObservation or self.hubObservation
+    if observation then observation.setup = nil end
+    trackRoom(self, name, type(run) == "table" and run.CurrentRoom, generation, mapState)
   end
-  self:RefreshBodies()
+  local owner = self.hostInput
+  if owner and (self:ActiveRoom(game) ~= owner.room or generation ~= owner.load or run.Hero ~= owner.hero) then
+    HostInput.revoke(self, "map loaded")
+  end
+end
+
+-- A normal encounter passes itself to SpawnRoomReward. The stock function can
+-- yield. Keep only its actual registered return in the same loaded room.
+function Game:ObserveRoomReward(original, encounter, ...)
+  local g = rom.game
+  local room = g.CurrentRun and g.CurrentRun.CurrentRoom
+  local load = room and self:LoadedRoom(room)
+  if not load or not encounter or encounter ~= room.Encounter or encounter.Name == "HealthRestore" then
+    return original(encounter, ...)
+  end
+  local result = table.pack(original(encounter, ...))
+  local reward = result[1]
+  if type(reward) == "table" and reward.Name == "PoseidonUpgrade" and stockId(reward.ObjectId)
+    and g.CurrentRun and g.CurrentRun.CurrentRoom == room and self:LoadedRoom(room) == load
+    and not room.Leaving and room.Encounter == encounter and g.LootObjects and g.LootObjects[reward.ObjectId] == reward then
+    local map = g.MapState
+    if map and map.RoomRequiredObjects and map.RoomRequiredObjects[reward.ObjectId] == reward then
+      for point, id in pairs(map.RewardPointsUsed or {}) do
+        if id == reward.ObjectId and stockId(point) then
+          load.encounterDrop = { encounter = encounter, source = reward, point = point }
+          break
+        end
+      end
+    end
+  end
+  return table.unpack(result, 1, result.n)
+end
+
+function Game:InstallHubObserver()
+  self.hubObservation = hubRoomObservation or self.hubObservation or {}
+  HubRoom.adopt(self.hubObservation, self)
+  HubRoom.install(self.hubObservation, rom.game)
 end
 
 function Game:Install()
+  self:InstallHubObserver()
+  if self.session and Session.isAuthority(self.session) and not self.roomRewardObserver then
+    local original = rom.game.SpawnRoomReward
+    if type(original) == "function" then
+      rom.game.SpawnRoomReward = function(...) return self:ObserveRoomReward(original, ...) end
+      self.roomRewardObserver = true
+    end
+  end
+  if self.session and Session.isAuthority(self.session) and not self.guestSplashInstalled then
+    local g = rom.game
+    local original = g.CheckOnDamagedPowers
+    if type(original) == "function" then
+      g.CheckOnDamagedPowers = function(victim, attacker, args, ...)
+        if not attacker or attacker == g.CurrentRun.Hero or not attacker.TraitDictionary then
+          return original(victim, attacker, args, ...)
+        end
+        local results = table.pack(original(victim, attacker, args, ...))
+        local ok, err = pcall(self.ApplyGuestSplash, self, g, victim, attacker, args)
+        if not ok and self.guestSplashError ~= err then
+          self.guestSplashError = err
+          rom.log.warning("[Hades2Together] guest Poseidon splash: " .. tostring(err))
+        end
+        return table.unpack(results, 1, results.n)
+      end
+      self.guestSplashInstalled = true
+    end
+  end
+  if self.session and Session.isAuthority(self.session) and not self.boonObserver then
+    local g = rom.game
+    local original = g.AddTraitData
+    if type(original) == "function" then
+      -- Reload replaces this instance's methods while the stock callback stays installed.
+      g.AddTraitData = function(...) return self:ObserveTraitGrant(g, original, ...) end
+      self.boonObserver = true
+    end
+  end
   if self.installed then
     return
   end
-  local onAnyLoad = self.gameEnv and self.gameEnv.OnAnyLoad or OnAnyLoad
+  local onAnyLoad = rom.game.OnAnyLoad
   if type(onAnyLoad) ~= "function" then
     return
   end
   self.installed = true
   onAnyLoad({ function(args)
-    Game:OnMap(args and args.name)
+    self:OnMap(args and args.name)
   end })
 end
 

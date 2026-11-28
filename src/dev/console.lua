@@ -1,3 +1,6 @@
+local Actions = import("protocol/actions.lua")
+local Input = import("client/input.lua")
+local Messages = import("protocol/messages.lua")
 local Session = import("protocol/session.lua")
 
 local Console = {}
@@ -14,14 +17,7 @@ local function freshName(console)
   while true do
     console.fakeSerial = console.fakeSerial + 1
     local name = "Fake" .. tostring(console.fakeSerial)
-    local taken = false
-    for index = 1, Session.MAX_PLAYERS do
-      local slot = console.session.slots[index]
-      if slot and slot.name == name then
-        taken = true
-      end
-    end
-    if not taken then
+    if not Session.findSeat(console.session, name) then
       return name
     end
   end
@@ -32,22 +28,20 @@ local function findSlot(session, token)
   if index and session.slots[index] then
     return index
   end
-  for seat = 1, Session.MAX_PLAYERS do
-    local slot = session.slots[seat]
-    if slot and slot.name == token then
-      return seat
-    end
-  end
+  return Session.findSeat(session, token)
 end
 
 local function roster(session)
   local parts = {}
-  for index = 1, Session.MAX_PLAYERS do
+  local seats = {}
+  for index in pairs(session.slots) do
+    seats[#seats + 1] = index
+  end
+  table.sort(seats)
+  for _, index in ipairs(seats) do
     local slot = session.slots[index]
-    if slot then
-      local state = slot.connected and "up" or "down"
-      parts[#parts + 1] = index .. ":" .. slot.name .. ":" .. state
-    end
+    local state = slot.connected and "up" or "down"
+    parts[#parts + 1] = index .. ":" .. slot.name .. ":" .. state
   end
   if #parts == 0 then
     return "none"
@@ -66,11 +60,31 @@ function Console.roster(console)
   return roster(console.session)
 end
 
-function Console.execute(console, line)
+local function submitSample(words, submitInput, maxPlayers)
+  local seatText = words[2]
+  local seat = seatText and seatText:match("^%d+$") and tonumber(seatText)
+  if not Session.validSeat(seat, maxPlayers) then
+    return "ERR input seat must be 1-" .. maxPlayers
+  end
+  local sample, errorMessage = Input.parse(words, 3)
+  if not sample then return "ERR " .. errorMessage end
+  if not submitInput then
+    return "ERR input submission unavailable"
+  end
+  local ok, reason = submitInput(seat, sample)
+  if not ok then
+    return "ERR input " .. reason
+  end
+  return "OK input " .. seat
+end
+
+function Console.execute(console, line, submitInput, submitBoon, killAll)
   if type(line) ~= "string" then
     return "ERR empty"
   end
-  line = line:gsub("\r", "")
+  if line:find("[\r\n]") then
+    return "ERR expected one command per line"
+  end
   line = line:gsub("^%s+", ""):gsub("%s+$", "")
   if line == "" then
     return "ERR empty"
@@ -82,6 +96,34 @@ function Console.execute(console, line)
 
   if head == "help" then
     return "OK commands: help | status | players | player add [name] | player remove <slot|name> | enter [map] | play"
+      .. " | env kill-all | boon <seat> <room/reward/round> <option> | input <seat> <moveX> <moveY> [action ...]; V" .. Actions.VERSION .. " actions: " .. Actions.names()
+      .. "; player remove marks the seat offline; player add with the same name reconnects it"
+  end
+
+  if head == "input" then
+    return submitSample(words, submitInput, Session.capacity(session))
+  end
+
+  if head == "env" then
+    if #words ~= 2 or words[2] ~= "kill-all" then return "ERR usage: env kill-all" end
+    if not Session.isAuthority(session) or not killAll then return "ERR env kill-all requires local authority" end
+    local request, reason = killAll()
+    if not request then return "ERR env kill-all " .. reason end
+    return "OK env kill-all accepted request=" .. request
+  end
+
+  if head == "boon" then
+    if not Session.isAuthority(session) or not submitBoon then return "ERR boon requires local authority" end
+    local seat = tonumber((words[2] or ""):match("^[1-9]%d*$") or "")
+    local room, reward, round = Messages.boonScope(words[3])
+    if #words ~= 4 or not Session.validSeat(seat, Session.capacity(session)) or not room
+      or #words[4] > 128 or not words[4]:match("^[%w_]+$") then
+      return "ERR usage: boon <seat> <room/reward/round> <option>"
+    end
+    local id, reason = submitBoon(seat, room, reward, round, words[4])
+    local request = "boon seat=" .. seat .. " opportunity=" .. words[3] .. " option=" .. words[4]
+    if not id then return "ERR " .. request .. " " .. tostring(reason) end
+    return "OK " .. request .. " instance=" .. id
   end
 
   if head == "play" then
@@ -91,8 +133,8 @@ function Console.execute(console, line)
 
   if head == "enter" then
     local mapName = words[2] or "F_Test"
-    if not mapName:match("^[%w_]+$") then
-      return "ERR bad map"
+    if #words > 2 or not mapName:match("^[%w_]+$") then
+      return "ERR bad map; use enter F_Test"
     end
     console.enterMap = mapName
     return "OK enter " .. mapName
@@ -135,8 +177,8 @@ function Console.execute(console, line)
       return "ERR not found"
     end
     local name = session.slots[slot].name
-    Session.drop(session, slot)
-    return string.format("OK dropped %d %s", slot, name)
+    Session.release(session, slot)
+    return string.format("OK offline %d %s", slot, name)
   end
 
   return "ERR unknown command"

@@ -1,9 +1,15 @@
+local Session = import("protocol/session.lua")
+
 local Party = {}
 
-Party.MAX = 4
+Party.MAX = Session.MAX_PLAYERS
 
-function Party.new()
-  return { members = {} }
+function Party.new(maxPlayers)
+  if maxPlayers == nil then
+    maxPlayers = Party.MAX
+  end
+  assert(Session.validSeat(maxPlayers), "invalid maxPlayers")
+  return { members = {}, maxPlayers = maxPlayers }
 end
 
 function Party.count(party)
@@ -31,7 +37,7 @@ function Party.add(party, playerId)
   if party.members[playerId] then
     return false, "already in party"
   end
-  if Party.count(party) >= Party.MAX then
+  if Party.count(party) >= (party.maxPlayers or Party.MAX) then
     return false, "party full"
   end
   party.members[playerId] = { id = playerId, alive = true }
